@@ -98,6 +98,16 @@ export default function Auth({ onAuthChange }: AuthProps) {
             >
               {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
             </Button>
+            {isLogin && (
+              <div className="text-center">
+                <a
+                  href="/sign-in-magic"
+                  className="text-sm text-primary hover:underline"
+                >
+                  Use magic link instead
+                </a>
+              </div>
+            )}
           </form>
         </CardContent>
       </Card>
