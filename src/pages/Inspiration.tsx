@@ -1,58 +1,80 @@
-import { useState } from "react";
-import { uploadInspiration } from "@/lib/inspo";
+import { useRef, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import { uploadAndStartInspiration } from "@/lib/inspo";
+import { supabase } from "@/lib/supabase";
 
 export default function InspirationPage() {
-  const [file, setFile] = useState<File|null>(null);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{queryId:string,imagePath:string}|null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [loading, setLoading] = useState(false);
+  const [recent, setRecent] = useState<Array<{id:string; image_path:string; created_at:string}>>([]);
+  const { toast } = useToast();
 
-  async function onStart(e: React.FormEvent) {
-    e.preventDefault();
+  async function loadRecent() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data, error } = await supabase
+      .from("inspiration_queries")
+      .select("id, image_path, created_at")
+      .eq("owner", user.id)
+      .order("created_at", { ascending: false })
+      .limit(10);
+    if (!error && data) setRecent(data);
+  }
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
     if (!file) return;
-    setBusy(true);
     try {
-      const r = await uploadInspiration(file);
-      setResult(r);
+      setLoading(true);
+      const { queryId } = await uploadAndStartInspiration(file);
+      toast({ title: "Photo queued", description: `Query ${queryId} started.` });
+      await loadRecent();
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Upload failed", description: String(err?.message || err) });
     } finally {
-      setBusy(false);
+      setLoading(false);
+      if (fileRef.current) fileRef.current.value = "";
     }
   }
 
+  // call once on mount
+  useEffect(() => { loadRecent(); }, []);
+
   return (
-    <div className="max-w-xl mx-auto p-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-2xl">Find Similar Items</CardTitle>
-          <p className="text-muted-foreground">Upload an inspiration photo to find similar items in your closet</p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form onSubmit={onStart} className="space-y-3">
-            <div>
-              <input 
-                type="file" 
-                accept="image/*" 
-                onChange={e=>setFile(e.target.files?.[0] ?? null)}
-                className="w-full p-2 border rounded-md"
-              />
-            </div>
-            <Button type="submit" disabled={!file || busy} className="w-full">
-              {busy ? "Starting..." : "Start Analysis"}
-            </Button>
-          </form>
-          
-          {result && (
-            <div className="p-4 bg-muted rounded-lg">
-              <div className="text-sm text-muted-foreground">
-                <div className="font-medium text-foreground mb-2">Analysis Started!</div>
-                Query ID: <code className="bg-background px-1 rounded">{result.queryId}</code><br/>
-                <div className="mt-2 text-xs">Next step will run detection & matching (coming next).</div>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+    <div className="max-w-3xl mx-auto p-6 space-y-8">
+      <div>
+        <h1 className="text-3xl font-bold">Style Inspiration</h1>
+        <p className="text-muted-foreground">Upload a photo to find similar items in your closet.</p>
+      </div>
+
+      <div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={onPick}
+        />
+        <Button size="lg" onClick={() => fileRef.current?.click()} disabled={loading}>
+          {loading ? "Uploading…" : "Upload & Analyze Photo"}
+        </Button>
+      </div>
+
+      <section>
+        <h2 className="text-xl font-semibold mb-3">Recent Searches</h2>
+        {recent.length === 0 ? (
+          <p className="text-muted-foreground">No inspiration searches yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {recent.map(r => (
+              <li key={r.id} className="text-sm">
+                <span className="font-mono">{r.id.slice(0,8)}</span> — {new Date(r.created_at).toLocaleString()}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
