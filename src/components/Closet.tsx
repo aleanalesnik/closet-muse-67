@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
+import { uploadAndProcessItem } from '@/lib/items';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -69,43 +70,24 @@ export default function Closet({ user }: ClosetProps) {
 
     setUploading(true);
     try {
-      // Generate unique filename
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${crypto.randomUUID()}.${fileExt}`;
-      const filePath = `${user.id}/items/${fileName}`;
+      const { itemId, imagePath } = await uploadAndProcessItem(file, file.name.split('.')[0]);
+      
+      // Add processing state
+      setProcessing(prev => new Set([...prev, itemId]));
+      
+      toast({ 
+        title: 'Processing started', 
+        description: "We're tagging your item…" 
+      });
 
-      // Upload to storage
-      const { error: uploadError } = await supabase.storage
-        .from('sila')
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      // Create item record
-      const { data: newItem, error: insertError } = await supabase
-        .from('items')
-        .insert({
-          owner: user.id,
-          image_path: filePath,
-          title: file.name.split('.')[0]
-        })
-        .select()
-        .single();
-
-      if (insertError) throw insertError;
-
-      // Add to local state
-      setItems(prev => [newItem, ...prev]);
-      setProcessing(prev => new Set([...prev, newItem.id]));
-
-      // Create signed URL for new item
-      const urls = await batchCreateSignedUrls([filePath]);
-      setSignedUrls(prev => ({ ...prev, ...urls }));
-
-      // Process item in background
-      await processItem(newItem.id, filePath);
-
-      toast({ title: 'Item uploaded successfully!' });
+      // Refresh items list to show the new item and get updated data after processing
+      await loadItems();
+      
+      toast({ 
+        title: 'Item processed successfully!',
+        description: 'Your item has been added with tags.' 
+      });
+      
     } catch (error: any) {
       toast({ 
         title: 'Upload failed', 
@@ -120,43 +102,18 @@ export default function Closet({ user }: ClosetProps) {
     }
   };
 
-  const processItem = async (itemId: string, imagePath: string) => {
-    try {
-      const { data, error } = await supabase.functions.invoke('items-process', {
-        body: { itemId, imagePath }
+  // Remove processing state when item has category (processing completed)
+  useEffect(() => {
+    setProcessing(prev => {
+      const newSet = new Set(prev);
+      items.forEach(item => {
+        if (item.category && newSet.has(item.id)) {
+          newSet.delete(item.id);
+        }
       });
-
-      if (error) throw error;
-
-      // Refresh the item data
-      const { data: updatedItem, error: fetchError } = await supabase
-        .from('items')
-        .select('*')
-        .eq('id', itemId)
-        .single();
-
-      if (fetchError) throw fetchError;
-
-      // Update local state
-      setItems(prev => 
-        prev.map(item => item.id === itemId ? updatedItem : item)
-      );
-
-      toast({ title: 'Item processed successfully!' });
-    } catch (error: any) {
-      toast({ 
-        title: 'Processing failed', 
-        description: error.message,
-        variant: 'destructive' 
-      });
-    } finally {
-      setProcessing(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(itemId);
-        return newSet;
-      });
-    }
-  };
+      return newSet;
+    });
+  }, [items]);
 
 
   return (
