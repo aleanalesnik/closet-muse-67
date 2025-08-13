@@ -14,13 +14,254 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      inspiration_detections: {
+        Row: {
+          bbox: number[]
+          category: string | null
+          crop_path: string | null
+          embedding: string | null
+          id: string
+          mask_path: string | null
+          query_id: string | null
+        }
+        Insert: {
+          bbox: number[]
+          category?: string | null
+          crop_path?: string | null
+          embedding?: string | null
+          id?: string
+          mask_path?: string | null
+          query_id?: string | null
+        }
+        Update: {
+          bbox?: number[]
+          category?: string | null
+          crop_path?: string | null
+          embedding?: string | null
+          id?: string
+          mask_path?: string | null
+          query_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inspiration_detections_query_id_fkey"
+            columns: ["query_id"]
+            isOneToOne: false
+            referencedRelation: "inspiration_queries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inspiration_queries: {
+        Row: {
+          created_at: string | null
+          error: string | null
+          id: string
+          image_path: string
+          owner: string
+          status: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          error?: string | null
+          id?: string
+          image_path: string
+          owner: string
+          status?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          error?: string | null
+          id?: string
+          image_path?: string
+          owner?: string
+          status?: string | null
+        }
+        Relationships: []
+      }
+      item_embeddings: {
+        Row: {
+          embedding: string | null
+          item_id: string
+        }
+        Insert: {
+          embedding?: string | null
+          item_id: string
+        }
+        Update: {
+          embedding?: string | null
+          item_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "item_embeddings_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: true
+            referencedRelation: "items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      items: {
+        Row: {
+          category: string | null
+          color_hex: string | null
+          color_name: string | null
+          created_at: string | null
+          id: string
+          image_path: string
+          mask_path: string | null
+          notes: string | null
+          owner: string
+          subcategory: string | null
+          title: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          category?: string | null
+          color_hex?: string | null
+          color_name?: string | null
+          created_at?: string | null
+          id?: string
+          image_path: string
+          mask_path?: string | null
+          notes?: string | null
+          owner: string
+          subcategory?: string | null
+          title?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          category?: string | null
+          color_hex?: string | null
+          color_name?: string | null
+          created_at?: string | null
+          id?: string
+          image_path?: string
+          mask_path?: string | null
+          notes?: string | null
+          owner?: string
+          subcategory?: string | null
+          title?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string | null
+          display_name: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          display_name?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          display_name?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      binary_quantize: {
+        Args: { "": string } | { "": unknown }
+        Returns: unknown
+      }
+      halfvec_avg: {
+        Args: { "": number[] }
+        Returns: unknown
+      }
+      halfvec_out: {
+        Args: { "": unknown }
+        Returns: unknown
+      }
+      halfvec_send: {
+        Args: { "": unknown }
+        Returns: string
+      }
+      halfvec_typmod_in: {
+        Args: { "": unknown[] }
+        Returns: number
+      }
+      hnsw_bit_support: {
+        Args: { "": unknown }
+        Returns: unknown
+      }
+      hnsw_halfvec_support: {
+        Args: { "": unknown }
+        Returns: unknown
+      }
+      hnsw_sparsevec_support: {
+        Args: { "": unknown }
+        Returns: unknown
+      }
+      hnswhandler: {
+        Args: { "": unknown }
+        Returns: unknown
+      }
+      ivfflat_bit_support: {
+        Args: { "": unknown }
+        Returns: unknown
+      }
+      ivfflat_halfvec_support: {
+        Args: { "": unknown }
+        Returns: unknown
+      }
+      ivfflathandler: {
+        Args: { "": unknown }
+        Returns: unknown
+      }
+      l2_norm: {
+        Args: { "": unknown } | { "": unknown }
+        Returns: number
+      }
+      l2_normalize: {
+        Args: { "": string } | { "": unknown } | { "": unknown }
+        Returns: unknown
+      }
+      sparsevec_out: {
+        Args: { "": unknown }
+        Returns: unknown
+      }
+      sparsevec_send: {
+        Args: { "": unknown }
+        Returns: string
+      }
+      sparsevec_typmod_in: {
+        Args: { "": unknown[] }
+        Returns: number
+      }
+      vector_avg: {
+        Args: { "": number[] }
+        Returns: string
+      }
+      vector_dims: {
+        Args: { "": string } | { "": unknown }
+        Returns: number
+      }
+      vector_norm: {
+        Args: { "": string }
+        Returns: number
+      }
+      vector_out: {
+        Args: { "": string }
+        Returns: unknown
+      }
+      vector_send: {
+        Args: { "": string }
+        Returns: string
+      }
+      vector_typmod_in: {
+        Args: { "": unknown[] }
+        Returns: number
+      }
     }
     Enums: {
       [_ in never]: never
