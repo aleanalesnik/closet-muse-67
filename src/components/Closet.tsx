@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { batchCreateSignedUrls } from '@/lib/storage';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -28,6 +29,7 @@ export default function Closet({ user }: ClosetProps) {
   const [items, setItems] = useState<Item[]>([]);
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState<Set<string>>(new Set());
+  const [signedUrls, setSignedUrls] = useState<{ [path: string]: string }>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -43,7 +45,15 @@ export default function Closet({ user }: ClosetProps) {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setItems(data || []);
+      const itemsData = data || [];
+      setItems(itemsData);
+
+      // Batch create signed URLs for all items
+      const imagePaths = itemsData.map(item => item.image_path).filter(Boolean);
+      if (imagePaths.length > 0) {
+        const urls = await batchCreateSignedUrls(imagePaths);
+        setSignedUrls(urls);
+      }
     } catch (error: any) {
       toast({ 
         title: 'Error loading items', 
@@ -87,6 +97,10 @@ export default function Closet({ user }: ClosetProps) {
       // Add to local state
       setItems(prev => [newItem, ...prev]);
       setProcessing(prev => new Set([...prev, newItem.id]));
+
+      // Create signed URL for new item
+      const urls = await batchCreateSignedUrls([filePath]);
+      setSignedUrls(prev => ({ ...prev, ...urls }));
 
       // Process item in background
       await processItem(newItem.id, filePath);
@@ -144,10 +158,6 @@ export default function Closet({ user }: ClosetProps) {
     }
   };
 
-  const getImageUrl = (path: string) => {
-    const { data } = supabase.storage.from('sila').getPublicUrl(path);
-    return data.publicUrl;
-  };
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -182,7 +192,7 @@ export default function Closet({ user }: ClosetProps) {
             <CardContent className="p-0">
               <div className="aspect-square relative overflow-hidden rounded-t-lg bg-muted">
                 <img
-                  src={getImageUrl(item.image_path)}
+                  src={signedUrls[item.image_path] || "/placeholder.svg"}
                   alt={item.title || 'Closet item'}
                   className="w-full h-full object-cover transition-transform group-hover:scale-105"
                   loading="lazy"
