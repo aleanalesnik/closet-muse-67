@@ -23,6 +23,18 @@ interface Detection {
   category?: string;
   crop_path?: string;
   mask_path?: string;
+  embedding?: number[];
+}
+
+interface MatchedItem {
+  item_id: string;
+  score: number;
+  title: string;
+  category: string;
+  subcategory: string;
+  color_hex: string;
+  color_name: string;
+  image_path: string;
 }
 
 interface InspirationProps {
@@ -32,6 +44,7 @@ interface InspirationProps {
 export default function Inspiration({ user }: InspirationProps) {
   const [queries, setQueries] = useState<InspirationQuery[]>([]);
   const [detections, setDetections] = useState<Detection[]>([]);
+  const [matchedItems, setMatchedItems] = useState<{[detectionId: string]: MatchedItem[]}>({});
   const [activeQuery, setActiveQuery] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [imageUrls, setImageUrls] = useState<{[key: string]: string}>({});
@@ -89,11 +102,12 @@ export default function Inspiration({ user }: InspirationProps) {
         .eq('query_id', queryId);
 
       if (error) throw error;
-      setDetections(data || []);
+      const detectionData = data || [];
+      setDetections(detectionData);
       
       // Load signed URLs for all detection crops
-      if (data && data.length > 0) {
-        const paths = data.filter(d => d.crop_path).map(d => d.crop_path!);
+      if (detectionData.length > 0) {
+        const paths = detectionData.filter(d => d.crop_path).map(d => d.crop_path!);
         const urls: {[key: string]: string} = {};
         
         await Promise.all(
@@ -104,6 +118,9 @@ export default function Inspiration({ user }: InspirationProps) {
         );
         
         setImageUrls(prev => ({...prev, ...urls}));
+        
+        // Load matched items for detections with embeddings
+        await loadMatchedItems(detectionData);
       }
     } catch (error: any) {
       toast({ 
@@ -112,6 +129,45 @@ export default function Inspiration({ user }: InspirationProps) {
         variant: 'destructive' 
       });
     }
+  };
+
+  const loadMatchedItems = async (detections: Detection[]) => {
+    if (!user?.id) return;
+    
+    const matches: {[detectionId: string]: MatchedItem[]} = {};
+    
+    for (const detection of detections) {
+      if (detection.embedding) {
+        try {
+          const { data, error } = await supabase.rpc('match_user_items', {
+            p_owner: user.id,
+            p_query: detection.embedding,
+            p_limit: 6
+          });
+          
+          if (!error && data) {
+            matches[detection.id] = data;
+            
+            // Load signed URLs for matched item images
+            const imagePaths = data.map((item: MatchedItem) => item.image_path);
+            const urls: {[key: string]: string} = {};
+            
+            await Promise.all(
+              imagePaths.map(async (path) => {
+                const url = await getSignedImageUrl(path);
+                if (url) urls[path] = url;
+              })
+            );
+            
+            setImageUrls(prev => ({...prev, ...urls}));
+          }
+        } catch (error) {
+          console.error(`Error loading matches for detection ${detection.id}:`, error);
+        }
+      }
+    }
+    
+    setMatchedItems(matches);
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -152,8 +208,10 @@ export default function Inspiration({ user }: InspirationProps) {
       case 'processing':
         return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
       case 'completed':
+      case 'done':
         return <CheckCircle className="w-4 h-4 text-green-500" />;
       case 'failed':
+      case 'error':
         return <XCircle className="w-4 h-4 text-red-500" />;
       default:
         return null;
@@ -221,7 +279,7 @@ export default function Inspiration({ user }: InspirationProps) {
                         <div className="flex items-center gap-2 mb-1">
                           {getStatusIcon(query.status)}
                           <Badge 
-                            variant={query.status === 'completed' ? 'default' : 'secondary'}
+                            variant={['completed', 'done'].includes(query.status) ? 'default' : 'secondary'}
                             className="text-xs"
                           >
                             {query.status}
@@ -249,51 +307,121 @@ export default function Inspiration({ user }: InspirationProps) {
         {/* Detections */}
         <div className="lg:col-span-2">
           {activeQuery ? (
-            <>
-              <h2 className="text-lg font-semibold mb-4">Detected Items</h2>
-              {detections.length > 0 ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {detections.map((detection) => (
-                    <Card key={detection.id} className="group hover:shadow-lg transition-shadow">
-                      <CardContent className="p-0">
-                        <div className="aspect-square relative overflow-hidden rounded-t-lg bg-muted">
-                          {detection.crop_path ? (
-                            <img
-                              src={imageUrls[detection.crop_path!] || "/placeholder.svg"}
-                              alt={`Detected ${detection.category}`}
-                              className="w-full h-full object-cover"
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+            (() => {
+              const currentQuery = queries.find(q => q.id === activeQuery);
+              const isProcessing = currentQuery && ['queued', 'processing'].includes(currentQuery.status);
+              
+              if (isProcessing) {
+                return (
+                  <>
+                    <h2 className="text-lg font-semibold mb-4">Processing...</h2>
+                    <div className="text-center py-12">
+                      <Loader2 className="w-12 h-12 text-muted-foreground mx-auto mb-4 animate-spin" />
+                      <h3 className="text-lg font-medium mb-2">Analyzing your photo</h3>
+                      <p className="text-muted-foreground">
+                        Finding similar items in your closet
+                      </p>
+                    </div>
+                  </>
+                );
+              }
+
+              return (
+                <>
+                  <h2 className="text-lg font-semibold mb-4">Detected Items & Matches</h2>
+                  {detections.length > 0 ? (
+                    <div className="space-y-8">
+                      {detections.map((detection) => (
+                        <div key={detection.id} className="border rounded-lg p-4">
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            {/* Detection Card */}
+                            <Card className="md:col-span-1">
+                              <CardContent className="p-0">
+                                <div className="aspect-square relative overflow-hidden rounded-lg bg-muted">
+                                  {detection.crop_path ? (
+                                    <img
+                                      src={imageUrls[detection.crop_path!] || "/placeholder.svg"}
+                                      alt={`Detected ${detection.category}`}
+                                      className="w-full h-full object-cover"
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center">
+                                      <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="p-3 text-center">
+                                  {detection.category && (
+                                    <Badge variant="secondary" className="text-xs">
+                                      {detection.category}
+                                    </Badge>
+                                  )}
+                                  <p className="text-sm font-medium mt-2">Detected Item</p>
+                                </div>
+                              </CardContent>
+                            </Card>
+
+                            {/* Matched Items */}
+                            <div className="md:col-span-3">
+                              <h4 className="text-sm font-medium mb-3">Similar items from your closet:</h4>
+                              {matchedItems[detection.id]?.length > 0 ? (
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                  {matchedItems[detection.id].map((item) => (
+                                    <Card key={item.item_id} className="group hover:shadow-lg transition-shadow">
+                                      <CardContent className="p-0">
+                                        <div className="aspect-square relative overflow-hidden rounded-t-lg bg-muted">
+                                          <img
+                                            src={imageUrls[item.image_path] || "/placeholder.svg"}
+                                            alt={item.title}
+                                            className="w-full h-full object-cover"
+                                            loading="lazy"
+                                          />
+                                        </div>
+                                        <div className="p-2">
+                                          <p className="text-xs font-medium truncate">{item.title}</p>
+                                          <div className="flex items-center justify-between mt-1">
+                                            <Badge variant="outline" className="text-xs">
+                                              {Math.round(item.score * 100)}% match
+                                            </Badge>
+                                            {item.color_hex && (
+                                              <div 
+                                                className="w-4 h-4 rounded-full border"
+                                                style={{ backgroundColor: item.color_hex }}
+                                                title={item.color_name}
+                                              />
+                                            )}
+                                          </div>
+                                        </div>
+                                      </CardContent>
+                                    </Card>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-center py-8 bg-muted/30 rounded-lg">
+                                  <Search className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                                  <p className="text-sm text-muted-foreground">
+                                    No similar items found in your closet
+                                  </p>
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                        
-                        <div className="p-3">
-                          <div className="flex items-center gap-2">
-                            {detection.category && (
-                              <Badge variant="secondary" className="text-xs">
-                                {detection.category}
-                              </Badge>
-                            )}
                           </div>
                         </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-12">
-                  <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-medium mb-2">Processing...</h3>
-                  <p className="text-muted-foreground">
-                    Analyzing your inspiration photo for similar items
-                  </p>
-                </div>
-              )}
-            </>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="text-lg font-medium mb-2">No items detected</h3>
+                      <p className="text-muted-foreground">
+                        We couldn't find any clothing items in this photo
+                      </p>
+                    </div>
+                  )}
+                </>
+              );
+            })()
           ) : (
             <div className="text-center py-16">
               <div className="w-24 h-24 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
