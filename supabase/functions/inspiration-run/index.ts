@@ -81,6 +81,10 @@ async function embedTextFallback(text: string, headers: Record<string, string>) 
   return Array.isArray(embedding) && Array.isArray(embedding[0]) ? embedding[0] : embedding;
 }
 
+function isHFHosted(url: string) {
+  return /huggingface\.co\/|router\.huggingface\.co\//.test(url);
+}
+
 async function extractDominantColor(base64Image: string): Promise<{ colorName: string; colorHex: string }> {
   try {
     const base64Data = base64Image.replace(/^data:image\/[^;]+;base64,/, '');
@@ -231,16 +235,34 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
   
   // DETECT
   console.log(`[DETECT] Starting detection...`);
-  const detectData = await callInferenceWithRetry(
-    DETECT_URL, 
-    { inputs: base64Image }, 
-    "DETECT", 
-    infHeaders
-  );
   
-  const boxes = Array.isArray(detectData?.boxes) ? detectData.boxes : [];
-  if (boxes.length === 0) throw new Error("No objects detected in image");
+  const detectBody = isHFHosted(DETECT_URL)
+    ? { inputs: base64Image }
+    : { image: base64Image, format: "base64" };
+
+  const detectRes = await fetch(DETECT_URL, {
+    method: "POST",
+    headers: { ...infHeaders, Accept: "application/json" },
+    body: JSON.stringify(detectBody),
+  });
   
+  const detectTxt = await detectRes.text();
+  let detectJson: any = {};
+  try { detectJson = JSON.parse(detectTxt); } catch {}
+  console.log("[DETECT] status", detectRes.status, "len", detectTxt.length, "preview:", detectTxt.slice(0, 160));
+  
+  if (!detectRes.ok) {
+    console.warn(`[DETECT] Failed: ${detectRes.status} - completing with 0 detections`);
+    return 0;
+  }
+  
+  const boxes = Array.isArray(detectJson?.boxes) ? detectJson.boxes : [];
+  if (boxes.length === 0) {
+    console.warn("[DETECT] No objects detected - completing with 0 detections");
+    return 0;
+  }
+  
+  console.log(`[DETECT] Found ${boxes.length} boxes, processing up to 5`);
   let detectionCount = 0;
   
   // Process each detected object
@@ -300,7 +322,7 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
     
     // Extract color and category
     const { colorName, colorHex } = await extractDominantColor(cropBase64);
-    const category = detectData.category || "clothing";
+    const category = bbox?.category || "clothing";
     
     // Store paths
     const parts = imagePath.split("/");
