@@ -403,17 +403,21 @@ Deno.serve(async (req) => {
       .upsert({ item_id: itemId, embedding });
     if (upsertErr) throw new Error(`Failed to upsert embedding: ${upsertErr.message}`);
 
-    // Update items with all metadata
+    // Update items with conditional category/subcategory patching
+    const patch: any = { 
+      color_hex: colorHex, 
+      color_name: colorName,
+      mask_path: maskBase64 ? maskPath : null,
+      crop_path: cropPath,
+    };
+
+    // Only set category/subcategory if current DB values are NULL
+    if (!currentItem?.category && category) patch.category = category;
+    if (!currentItem?.subcategory && subcategory) patch.subcategory = subcategory;
+
     const { error: updErr } = await supabase
       .from("items")
-      .update({
-        category, 
-        subcategory, 
-        color_hex: colorHex, 
-        color_name: colorName,
-        mask_path: maskBase64 ? maskPath : null,
-        crop_path: cropPath,
-      })
+      .update(patch)
       .eq("id", itemId);
     if (updErr) throw new Error(`Failed to update item: ${updErr.message}`);
 
