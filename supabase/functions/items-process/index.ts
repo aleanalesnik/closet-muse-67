@@ -259,35 +259,55 @@ Deno.serve(async (req) => {
     const buf = new Uint8Array(await img.arrayBuffer());
     const base64Image = uint8ToBase64(buf);
 
-    // STEP 1: DETECT
-    console.log(`[DETECT] Starting detection...`);
-    
-    const detectBody = isHFHosted(DETECT_URL)
-      ? { inputs: base64Image }            // HF Hosted/Router
-      : { image: base64Image, format: "base64" }; // custom endpoint
+    // STEP 1: DETECT (optional)
+    const ITEMS_USE_DETECT = Deno.env.get("ITEMS_USE_DETECT") !== "0"; // default: use detection
+    let cropBase64ForEmbed = base64Image; // default: whole image
+    let usedDetection = false;
+    let bbox = null;
 
-    const detectRes = await fetch(DETECT_URL, {
-      method: "POST",
-      headers: { ...infHeaders, Accept: "application/json" },
-      body: JSON.stringify(detectBody),
-    });
-    
-    if (!detectRes.ok) {
-      const errorText = await detectRes.text();
-      throw new Error(`DETECT failed: ${detectRes.status} - ${errorText}`);
+    if (ITEMS_USE_DETECT) {
+      console.log(`[DETECT] Starting detection...`);
+      
+      const detectBody = isHFHosted(DETECT_URL)
+        ? { inputs: base64Image }            // HF Hosted/Router
+        : { image: base64Image, format: "base64" }; // custom endpoint
+
+      const detectRes = await fetch(DETECT_URL, {
+        method: "POST",
+        headers: { ...infHeaders, Accept: "application/json" },
+        body: JSON.stringify(detectBody),
+      });
+      
+      const detectTxt = await detectRes.text();
+      let detectJson: any = {};
+      try { detectJson = JSON.parse(detectTxt); } catch {}
+      console.log("[DETECT] status", detectRes.status, "len", detectTxt.length, "preview:", detectTxt.slice(0, 160));
+      
+      if (!detectRes.ok) {
+        console.warn(`[DETECT] Failed: ${detectRes.status} - falling back to whole image`);
+      } else {
+        const boxes = Array.isArray(detectJson?.boxes) ? detectJson.boxes : [];
+        
+        if (boxes.length > 0) {
+          usedDetection = true;
+          // pick the best box (highest score or largest area)
+          const best = boxes
+            .slice()
+            .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))[0];
+          bbox = best;
+          console.log(`[DETECT] Found ${boxes.length} boxes, using best with score ${best.score ?? 'N/A'}`);
+        } else {
+          console.warn("[DETECT] 0 boxes — falling back to whole-image crop");
+        }
+      }
+    } else {
+      console.log("[DETECT] Skipped (ITEMS_USE_DETECT=0)");
     }
-    
-    const detectData = await detectRes.json();
-    
-    const boxes = Array.isArray(detectData?.boxes) ? detectData.boxes : [];
-    if (boxes.length === 0) throw new Error("No objects detected in image");
-    const bbox = boxes[0];
 
-    // STEP 2: SEGMENT (optional)
+    // STEP 2: SEGMENT (optional, only if we had a detection)
     let maskBase64 = null;
-    let cropBase64 = base64Image; // default to original image
     
-    if (SEGMENT_URL) {
+    if (SEGMENT_URL && usedDetection && bbox) {
       console.log(`[SEGMENT] Starting segmentation...`);
       const segmentData = await callInferenceWithRetry(
         SEGMENT_URL, 
@@ -297,32 +317,33 @@ Deno.serve(async (req) => {
       );
       
       maskBase64 = segmentData?.mask || null;
-      cropBase64 = segmentData?.crop || base64Image;
+      cropBase64ForEmbed = segmentData?.crop || base64Image;
       
       if (!segmentData?.crop) {
         console.log(`[SEGMENT] Warning: No crop returned, using original image`);
       }
-    } else {
-      console.log(`[SEGMENT] Skipped - no SEGMENT_URL configured`);
+    } else if (SEGMENT_URL && !usedDetection) {
+      console.log(`[SEGMENT] Skipped - no detection bbox available`);
+    } else if (!SEGMENT_URL) {
+      console.log(`[SEGMENT] Skipped - SEGMENT_URL not configured`);
     }
 
-    // Derive consistent output paths from input imagePath (userId/items/uuid.ext)
-    const parts = imagePath.split("/");
-    const userId = parts[0];
-    const itemUuid = parts[2]?.split(".")[0];
-    
-    if (!userId || !itemUuid) {
+    // Store generated files (crop and optional mask)
+    const imageParts = imagePath.split("/");
+    if (imageParts.length < 3) {
       throw new Error(`Invalid imagePath format: ${imagePath}. Expected userId/items/uuid.ext`);
     }
     
-    const maskPath = `${userId}/items/${itemUuid}-mask.png`;
+    const userId = imageParts[0];
+    const itemUuid = imageParts[2]?.split(".")[0];
+    const maskPath = maskBase64 ? `${userId}/items/${itemUuid}-mask.png` : null;
     const cropPath = `${userId}/items/${itemUuid}-crop.png`;
 
     // Store files to storage
     const toBytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     
-    // Always save crop (either segmented or original image)
-    await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64), { 
+    // Always save crop (either segmented crop or original image)
+    await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64ForEmbed), { 
       contentType: "image/png", 
       upsert: true 
     });
@@ -340,18 +361,27 @@ Deno.serve(async (req) => {
     let embedding = null;
     
     try {
-      const embedData = await callInferenceWithRetry(
-        EMBED_URL, 
-        { inputs: cropBase64 }, 
-        "EMBED", 
-        infHeaders
-      );
+      const embedBody = isHFHosted(EMBED_URL)
+        ? { inputs: cropBase64ForEmbed }
+        : { image: cropBase64ForEmbed, format: "base64" };
+
+      const embedRes = await fetch(EMBED_URL, {
+        method: "POST",
+        headers: { ...infHeaders, Accept: "application/json" },
+        body: JSON.stringify(embedBody),
+      });
+      
+      if (!embedRes.ok) {
+        throw new Error(`EMBED failed: ${embedRes.status}`);
+      }
+      
+      const embedData = await embedRes.json();
       embedding = embedData?.embedding;
     } catch (error) {
       if (error.message.includes('404')) {
         console.log(`[EMBED] 404 fallback: captioning crop for text embedding`);
         // Caption the crop first
-        const captionResult = await captionAndMatch(base64Image);
+        const captionResult = await captionAndMatch(cropBase64ForEmbed);
         if (captionResult?.label) {
           const textEmbed = await embedTextFallback(`clothing item: ${captionResult.label}`, infHeaders);
           if (textEmbed) embedding = textEmbed;
@@ -366,7 +396,7 @@ Deno.serve(async (req) => {
 
     // Extract dominant color from crop
     console.log(`[COLOR] Extracting dominant color from crop...`);
-    const { colorName, colorHex } = await extractDominantColor(cropBase64);
+    const { colorName, colorHex } = await extractDominantColor(cropBase64ForEmbed);
     console.log(`[COLOR] Detected: ${colorName} (${colorHex})`);
     
     // Get current item to check for existing category/subcategory
@@ -377,19 +407,18 @@ Deno.serve(async (req) => {
       .single();
     if (itemErr) throw new Error(`Failed to get current item: ${itemErr.message}`);
     
-    // Auto-classify clothing type only if category/subcategory are null
-    let autoLabel: {label: string, score: number} | null = await zeroShotClassify(base64Image);
-    if (!autoLabel) autoLabel = await captionAndMatch(base64Image);
+    // Auto-classify clothing type regardless of detection (using crop or whole image)
+    let autoLabel: {label: string, score: number} | null = await zeroShotClassify(cropBase64ForEmbed);
+    if (!autoLabel) autoLabel = await captionAndMatch(cropBase64ForEmbed);
 
-    let category = detectData.category || currentItem.category;      // keep existing if present
-    let subcategory = detectData.subcategory || currentItem.subcategory;
+    let category = null;
+    let subcategory = null;
 
-    if ((!currentItem.category || !currentItem.subcategory) && autoLabel) {
+    if (autoLabel) {
       const mapped = CATEGORY_MAP[autoLabel.label];
       if (mapped) {
-        // Only set if null to respect any manual/previous value
-        if (!currentItem.category) category = mapped;
-        if (!currentItem.subcategory) subcategory = autoLabel.label;
+        category = mapped;
+        subcategory = autoLabel.label;
         console.log(`[CLASSIFY] Auto-detected: ${autoLabel.label} -> ${mapped}/${autoLabel.label} (score: ${autoLabel.score})`);
       }
     }
@@ -411,7 +440,7 @@ Deno.serve(async (req) => {
       crop_path: cropPath,
     };
 
-    // Only set category/subcategory if current DB values are NULL
+    // Only set category/subcategory if current DB values are NULL and we have auto-labels
     if (!currentItem?.category && category) patch.category = category;
     if (!currentItem?.subcategory && subcategory) patch.subcategory = subcategory;
 
