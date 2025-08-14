@@ -127,54 +127,67 @@ const CAT: Record<string,"top"|"bottom"|"shoes"|"bag"|"accessory"> = {
 
 // Caption → label identification
 async function labelFromCaption(b64: string) {
-  const CAPTION_URL = normalizeSecret(Deno.env.get("CAPTION_URL"));
-  console.log("[CAPTION] CAPTION_URL:", CAPTION_URL);
+  const CAPTION_URL_RAW = Deno.env.get("CAPTION_URL");
+  console.log("[CAPTION] Raw CAPTION_URL:", CAPTION_URL_RAW);
+  const CAPTION_URL = normalizeSecret(CAPTION_URL_RAW);
+  console.log("[CAPTION] Normalized CAPTION_URL:", CAPTION_URL);
   if (!CAPTION_URL) {
-    console.log("[CAPTION] No CAPTION_URL configured");
+    console.log("[CAPTION] No CAPTION_URL configured after normalization");
     return {};
   }
+  
+  const infHeaders = buildInferenceHeaders();
+  console.log("[CAPTION] Headers:", Object.keys(infHeaders));
+  
   const body = isHFHosted(CAPTION_URL) ? { inputs: b64 } : { image: b64, format: "base64" };
   console.log("[CAPTION] Making request to:", CAPTION_URL, "body type:", isHFHosted(CAPTION_URL) ? "HF hosted" : "custom");
-  const r = await fetch(CAPTION_URL, {
-    method: "POST",
-    headers: { ...buildInferenceHeaders(), Accept: "application/json" },
-    body: JSON.stringify(body)
-  });
-  console.log("[CAPTION] Response status:", r.status);
-  if (!r.ok) {
-    const errorText = await r.text().catch(() => "");
-    console.warn("[CAPTION] Error response:", errorText.slice(0, 200));
+  
+  try {
+    const r = await fetch(CAPTION_URL, {
+      method: "POST",
+      headers: { ...infHeaders, Accept: "application/json" },
+      body: JSON.stringify(body)
+    });
+    console.log("[CAPTION] Response status:", r.status);
+    if (!r.ok) {
+      const errorText = await r.text().catch(() => "");
+      console.warn("[CAPTION] Error response:", errorText.slice(0, 200));
+      return {};
+    }
+
+    const j = await r.json().catch(() => ({}));
+    const raw = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
+    console.log("[CAPTION] Raw caption:", raw);
+    if (!raw) return {};
+    const lc = ` ${raw.toLowerCase()} `;
+    console.log("[CAPTION] Lowercased with spaces:", lc);
+
+    // exact vocab hit
+    for (const v of VOCAB) {
+      if (lc.includes(` ${v} `)) {
+        console.log("[CAPTION] Found exact vocab match:", v);
+        return { sub: v, cat: CAT[v], caption: raw, conf: 0.7 };
+      }
+    }
+
+    // synonyms → canonical
+    const tokens = lc.replace(/[^a-z\s-]/g," ").split(/\s+/).filter(Boolean);
+    console.log("[CAPTION] Tokens for synonym matching:", tokens.slice(0, 10));
+    for (let i=0;i<tokens.length;i++){
+      const w1 = tokens[i];
+      const w2 = i+1 < tokens.length ? `${w1} ${tokens[i+1]}` : w1;
+      const cand = CANON[w2] || CANON[w1];
+      if (cand) {
+        console.log("[CAPTION] Found synonym match:", w2 || w1, "->", cand);
+        return { sub: cand, cat: CAT[cand], caption: raw, conf: 0.6 };
+      }
+    }
+    console.log("[CAPTION] No matches found, returning caption only");
+    return { caption: raw };
+  } catch (error) {
+    console.error("[CAPTION] Fetch error:", error.message);
     return {};
   }
-  const j = await r.json().catch(() => ({}));
-  const raw = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
-  console.log("[CAPTION] Raw caption:", raw);
-  if (!raw) return {};
-  const lc = ` ${raw.toLowerCase()} `;
-  console.log("[CAPTION] Lowercased with spaces:", lc);
-
-  // exact vocab hit
-  for (const v of VOCAB) {
-    if (lc.includes(` ${v} `)) {
-      console.log("[CAPTION] Found exact vocab match:", v);
-      return { sub: v, cat: CAT[v], caption: raw, conf: 0.7 };
-    }
-  }
-
-  // synonyms → canonical
-  const tokens = lc.replace(/[^a-z\s-]/g," ").split(/\s+/).filter(Boolean);
-  console.log("[CAPTION] Tokens for synonym matching:", tokens.slice(0, 10));
-  for (let i=0;i<tokens.length;i++){
-    const w1 = tokens[i];
-    const w2 = i+1 < tokens.length ? `${w1} ${tokens[i+1]}` : w1;
-    const cand = CANON[w2] || CANON[w1];
-    if (cand) {
-      console.log("[CAPTION] Found synonym match:", w2 || w1, "->", cand);
-      return { sub: cand, cat: CAT[cand], caption: raw, conf: 0.6 };
-    }
-  }
-  console.log("[CAPTION] No matches found, returning caption only");
-  return { caption: raw };
 }
 
 // Text embedding fallback
@@ -212,7 +225,12 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
 
   try {
+    console.log("[DEBUG] Function started - checking secrets...");
+    console.log("[DEBUG] CAPTION_URL raw:", Deno.env.get("CAPTION_URL"));
+    console.log("[DEBUG] INFERENCE_API_TOKEN raw:", Deno.env.get("INFERENCE_API_TOKEN"));
+    
     const { itemId, imagePath } = await req.json();
+    console.log("[DEBUG] Received:", { itemId, imagePath });
     if (!itemId || !imagePath) {
       return new Response(JSON.stringify({ ok: false, error: "itemId and imagePath required" }), {
         status: 400, headers: { ...cors, "Content-Type": "application/json" },
