@@ -10,8 +10,6 @@ function getServiceClient() {
 }
 
 function buildInferenceHeaders() {
-  const authHeader = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
-  const authPrefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
   const apiToken = Deno.env.get("INFERENCE_API_TOKEN");
   
   const headers: Record<string, string> = {
@@ -19,7 +17,7 @@ function buildInferenceHeaders() {
   };
   
   if (apiToken) {
-    headers[authHeader] = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+    headers["Authorization"] = `Bearer ${apiToken}`;
   }
   
   return headers;
@@ -94,10 +92,10 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
 
   try {
-    // Get the configured endpoints from environment variables (cleaned up for YOLOS)
+    // Get only the endpoints we actually use
     const endpoints = {
       FASHION_SEG: Deno.env.get("FASHION_SEG_URL"),
-      CAPTION: Deno.env.get("CAPTION_URLS")?.split(",")[0] || Deno.env.get("CAPTION_URL"), // First in chain
+      CAPTION: Deno.env.get("CAPTION_URLS")?.split(",")[0], // First in chain
       EMBED: Deno.env.get("EMBED_URL")
     };
 

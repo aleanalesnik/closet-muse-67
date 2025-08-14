@@ -9,8 +9,6 @@ function getServiceClient() {
 }
 
 function buildInferenceHeaders() {
-  const authHeader = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
-  const authPrefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
   const apiToken = Deno.env.get("INFERENCE_API_TOKEN");
   
   const headers: Record<string, string> = {
@@ -19,7 +17,7 @@ function buildInferenceHeaders() {
   };
   
   if (apiToken) {
-    headers[authHeader] = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+    headers["Authorization"] = `Bearer ${apiToken}`;
   }
   
   return headers;
@@ -177,8 +175,16 @@ async function tryCaption(base64Image: string): Promise<{ caption: string; url: 
     "https://api-inference.huggingface.co/models/microsoft/git-large-coco"
   ).split(",").map(url => url.trim());
 
-  const headers = buildInferenceHeaders();
   const trace: any[] = [];
+
+  // Check if INFERENCE_API_TOKEN is available
+  const apiToken = Deno.env.get("INFERENCE_API_TOKEN");
+  if (!apiToken) {
+    trace.push({ step: "CAPTION", status: "no_token", error: "INFERENCE_API_TOKEN not configured" });
+    return { caption: "clothing item", url: "no-token", trace };
+  }
+
+  const headers = buildInferenceHeaders();
 
   for (const url of captionUrls) {
     const startTime = Date.now();
@@ -454,9 +460,10 @@ Deno.serve(async (req) => {
 
     // Step 6: Optional embeddings (never block on failure)
     const EMBED_URL = Deno.env.get("EMBED_URL");
+    const INFERENCE_API_TOKEN = Deno.env.get("INFERENCE_API_TOKEN");
     let embedded = false;
 
-    if (EMBED_URL) {
+    if (EMBED_URL && INFERENCE_API_TOKEN) {
       console.log("Step 6: Computing embeddings...");
       try {
         const embedHeaders = buildInferenceHeaders();
@@ -501,11 +508,14 @@ Deno.serve(async (req) => {
 
         trace.push({ step: "EMBED", status: embedStatus, ms: embedMs });
       } catch (embedError) {
-        console.warn("Embedding error:", embedError.message);
-        trace.push({ step: "EMBED", status: 0, error: embedError.message });
+        const ms = Date.now() - embedStartTime;
+        console.log("Embedding failed:", embedError.message);
+        trace.push({ step: "EMBED", status: 0, ms, error: embedError.message });
       }
     } else {
-      console.log("EMBED_URL not configured, skipping embeddings");
+      const reason = !EMBED_URL ? "EMBED_URL not configured" : "INFERENCE_API_TOKEN not configured";
+      console.log("Step 6: Skipping embeddings -", reason);
+      trace.push({ step: "EMBED", status: "not_configured", reason });
     }
 
     console.log("Item processing completed successfully");

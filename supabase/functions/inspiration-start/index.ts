@@ -9,14 +9,7 @@ function getServiceClient() {
   return createClient(url, key);
 }
 
-function buildInferenceHeaders() {
-  const token = Deno.env.get("INFERENCE_API_TOKEN");
-  const name = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
-  const prefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
-  if (!token) throw new Error("Missing INFERENCE_API_TOKEN");
-  return { [name]: prefix ? `${prefix} ${token}` : token, "Content-Type": "application/json" };
-}
-
+// Note: inspiration-start doesn't need authentication headers since it only creates DB records
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -25,30 +18,93 @@ const cors = {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+
   try {
-    const { imagePath } = await req.json();
+    const { imagePath, debug } = await req.json();
+    console.log("inspiration-start called with:", { imagePath, debug });
+
     if (!imagePath) {
-      return new Response(JSON.stringify({ ok: false, error: "imagePath required" }), {
-        status: 400, headers: { ...cors, "Content-Type": "application/json" },
+      return new Response(JSON.stringify({ 
+        ok: false, 
+        error: "Missing imagePath" 
+      }), {
+        status: 400,
+        headers: { ...cors, "Content-Type": "application/json" }
       });
     }
-    const owner = String(imagePath).split("/")[0] || null;
-    if (!owner) throw new Error("Could not derive owner from imagePath");
 
     const supabase = getServiceClient();
-    const { data, error } = await supabase
+
+    // Get current user from JWT (passed via Authorization header from client)
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ 
+        ok: false, 
+        error: "Missing authorization header" 
+      }), {
+        status: 401,
+        headers: { ...cors, "Content-Type": "application/json" }
+      });
+    }
+
+    // Extract JWT token and get user info
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    
+    if (userError || !user) {
+      console.error("Auth error:", userError);
+      return new Response(JSON.stringify({ 
+        ok: false, 
+        error: "Invalid authentication" 
+      }), {
+        status: 401,
+        headers: { ...cors, "Content-Type": "application/json" }
+      });
+    }
+
+    console.log("Creating inspiration query for user:", user.id);
+
+    // Create inspiration query record
+    const { data: queryData, error: insertError } = await supabase
       .from("inspiration_queries")
-      .insert({ owner, image_path: imagePath, status: "queued" })
+      .insert({
+        owner: user.id,
+        image_path: imagePath,
+        status: "queued"
+      })
       .select("id")
       .single();
-    if (error) throw error;
 
-    return new Response(JSON.stringify({ ok: true, queryId: data.id }), {
-      headers: { ...cors, "Content-Type": "application/json" },
+    if (insertError) {
+      console.error("Failed to create inspiration query:", insertError);
+      return new Response(JSON.stringify({ 
+        ok: false, 
+        error: insertError.message 
+      }), {
+        status: 500,
+        headers: { ...cors, "Content-Type": "application/json" }
+      });
+    }
+
+    const queryId = queryData.id;
+    console.log("Created inspiration query:", queryId);
+
+    return new Response(JSON.stringify({ 
+      ok: true, 
+      queryId,
+      status: "queued"
+    }), {
+      headers: { ...cors, "Content-Type": "application/json" }
     });
-  } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: String(e?.message ?? e) }), {
-      status: 500, headers: { ...cors, "Content-Type": "application/json" },
+
+  } catch (error) {
+    console.error("inspiration-start error:", error);
+    return new Response(JSON.stringify({ 
+      ok: false, 
+      error: String(error?.message ?? error) 
+    }), {
+      status: 500,
+      headers: { ...cors, "Content-Type": "application/json" }
     });
   }
 });

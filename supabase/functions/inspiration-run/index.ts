@@ -10,8 +10,6 @@ function getServiceClient() {
 }
 
 function buildInferenceHeaders() {
-  const authHeader = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
-  const authPrefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
   const apiToken = Deno.env.get("INFERENCE_API_TOKEN");
   
   const headers: Record<string, string> = {
@@ -20,7 +18,7 @@ function buildInferenceHeaders() {
   };
   
   if (apiToken) {
-    headers[authHeader] = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+    headers["Authorization"] = `Bearer ${apiToken}`;
   }
   
   return headers;
@@ -241,7 +239,8 @@ async function createYolosDetections(queryId: string, imagePath: string, supabas
 
     // Optional embedding setup
     const EMBED_URL = Deno.env.get("EMBED_URL");
-    const embedHeaders = EMBED_URL ? buildInferenceHeaders() : null;
+    const INFERENCE_API_TOKEN = Deno.env.get("INFERENCE_API_TOKEN");
+    const embedHeaders = (EMBED_URL && INFERENCE_API_TOKEN) ? buildInferenceHeaders() : null;
 
     for (let i = 0; i < filteredDetections.length; i++) {
       const pred = filteredDetections[i];
@@ -255,9 +254,9 @@ async function createYolosDetections(queryId: string, imagePath: string, supabas
       // Extract color from full image
       const colorData = await extractDominantColor(base64Image);
 
-      // Try to get embedding if EMBED_URL is configured
+      // Try to get embedding if both EMBED_URL and token are configured
       let embedding = null;
-      if (EMBED_URL && embedHeaders) {
+      if (EMBED_URL && INFERENCE_API_TOKEN && embedHeaders) {
         try {
           const embedResponse = await fetch(EMBED_URL, {
             method: "POST",
@@ -275,6 +274,10 @@ async function createYolosDetections(queryId: string, imagePath: string, supabas
         } catch (embedError) {
           console.log("Embedding failed for detection", i, ":", embedError.message);
         }
+      } else if (!EMBED_URL) {
+        console.log("EMBED_URL not configured - skipping embedding for detection", i);
+      } else if (!INFERENCE_API_TOKEN) {
+        console.log("INFERENCE_API_TOKEN not configured - skipping embedding for detection", i);
       }
 
       insertData.push({
