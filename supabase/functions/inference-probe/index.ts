@@ -113,13 +113,56 @@ Deno.serve(async (req) => {
 
     console.log(`[PROBE] Starting endpoint health checks...`);
 
-    // Probe all configured endpoints concurrently
-    const probePromises = Object.entries(endpoints)
-      .filter(([_, url]) => url) // Only probe configured endpoints
-      .map(async ([name, url]) => {
-        const endpointHeaders = name === 'FASHION_SEG' ? fashionHeaders : headers;
-        const result = await probeEndpoint(url!, name, endpointHeaders);
-        return [name, result];
+    // Probe FASHION_SEG separately with YOLOS test payload
+    const probePromises = [];
+    
+    if (endpoints.FASHION_SEG) {
+      const fHeaders = buildFashionHeaders();
+      probePromises.push(
+        (async () => {
+          const name = 'FASHION_SEG';
+          const url = endpoints.FASHION_SEG!;
+          try {
+            // Test with minimal base64 payload for YOLOS
+            const response = await fetch(url, {
+              method: "POST",
+              headers: { ...fHeaders, "Content-Type": "application/json", "Accept": "application/json" },
+              body: JSON.stringify({ inputs: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" }) // 1px transparent PNG
+            });
+            
+            const urlWithoutToken = url.replace(/[\?&].*$/, '');
+            console.log(`[PROBE] ${name}: ${response.status} ${urlWithoutToken}`);
+            
+            return [name, {
+              name,
+              url: urlWithoutToken,
+              ok: response.ok || response.status === 400, // 400 is fine for probe, means endpoint is alive
+              status: response.status,
+              error: response.ok || response.status === 400 ? null : `HTTP ${response.status}`
+            }];
+          } catch (error) {
+            const urlWithoutToken = url.replace(/[\?&].*$/, '');
+            console.log(`[PROBE] ${name}: ERROR ${urlWithoutToken} - ${error.message}`);
+            return [name, {
+              name,
+              url: urlWithoutToken,
+              ok: false,
+              status: 0,
+              error: error.message
+            }];
+          }
+        })()
+      );
+    }
+
+    // Probe other configured endpoints
+    Object.entries(endpoints)
+      .filter(([name, url]) => name !== 'FASHION_SEG' && url) // Skip FASHION_SEG, handle separately
+      .forEach(([name, url]) => {
+        const endpointHeaders = headers;
+        probePromises.push(
+          probeEndpoint(url!, name, endpointHeaders).then(result => [name, result])
+        );
       });
 
     const probeResults = await Promise.all(probePromises);

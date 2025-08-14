@@ -115,37 +115,58 @@ async function extractDominantColor(b64: string) {
   }
 }
 
-// Taxonomy mapping functions
-function mapFashionCategory(detectedCategory: string): { category: string; subcategory: string } {
-  const categoryMap: Record<string, { category: string; subcategory: string }> = {
-    // Fashionpedia/ModaNet mappings
-    'top': { category: 'top', subcategory: 't-shirt' },
-    'shirt': { category: 'top', subcategory: 'shirt' },
-    'blouse': { category: 'top', subcategory: 'blouse' },
-    'sweater': { category: 'top', subcategory: 'sweater' },
-    'dress': { category: 'dress', subcategory: 'dress' },
-    'skirt': { category: 'bottom', subcategory: 'skirt' },
-    'pants': { category: 'bottom', subcategory: 'trousers' },
-    'trousers': { category: 'bottom', subcategory: 'trousers' },
-    'shorts': { category: 'bottom', subcategory: 'shorts' },
-    'jeans': { category: 'bottom', subcategory: 'jeans' },
-    'boots': { category: 'shoes', subcategory: 'boots' },
-    'sneakers': { category: 'shoes', subcategory: 'sneakers' },
-    'footwear': { category: 'shoes', subcategory: 'shoes' },
-    'bag': { category: 'bag', subcategory: 'handbag' },
-    'handbag': { category: 'bag', subcategory: 'handbag' },
-    'backpack': { category: 'bag', subcategory: 'backpack' },
-    'belt': { category: 'accessory', subcategory: 'belt' },
-    'sunglasses': { category: 'accessory', subcategory: 'sunglasses' },
-    'hat': { category: 'accessory', subcategory: 'hat' },
-    'headwear': { category: 'accessory', subcategory: 'hat' },
-    'scarf': { category: 'accessory', subcategory: 'scarf' },
-    'coat': { category: 'outerwear', subcategory: 'coat' },
-    'jacket': { category: 'outerwear', subcategory: 'jacket' }
-  };
+// YOLOS detection types
+type YolosBox = { xmin: number; ymin: number; xmax: number; ymax: number };
+type YolosPred = { score: number; label: string; box: YolosBox };
 
-  const detected = detectedCategory.toLowerCase();
-  return categoryMap[detected] || { category: 'top', subcategory: 't-shirt' };
+// YOLOS label mapping to our taxonomy
+function mapFashionLabel(label: string): { category: string; subcategory: string } {
+  const s = label.toLowerCase();
+  
+  if (["handbag", "bag", "tote bag", "shoulder bag"].some(x => s.includes(x))) 
+    return { category: "bag", subcategory: "handbag" };
+  if (["backpack"].some(x => s.includes(x))) 
+    return { category: "bag", subcategory: "backpack" };
+  if (["belt"].some(x => s.includes(x))) 
+    return { category: "accessory", subcategory: "belt" };
+  if (["sunglasses", "glasses"].some(x => s.includes(x))) 
+    return { category: "accessory", subcategory: "sunglasses" };
+  if (["hat", "cap", "beanie"].some(x => s.includes(x))) 
+    return { category: "accessory", subcategory: "hat" };
+  if (["boots"].some(x => s.includes(x))) 
+    return { category: "shoes", subcategory: "boots" };
+  if (["sneaker", "shoe", "trainer"].some(x => s.includes(x))) 
+    return { category: "shoes", subcategory: "sneakers" };
+  if (["dress"].some(x => s.includes(x))) 
+    return { category: "dress", subcategory: "dress" };
+  if (["skirt"].some(x => s.includes(x))) 
+    return { category: "bottom", subcategory: "skirt" };
+  if (["jeans", "pants", "trousers"].some(x => s.includes(x))) 
+    return { category: "bottom", subcategory: "trousers" };
+  if (["shorts"].some(x => s.includes(x))) 
+    return { category: "bottom", subcategory: "shorts" };
+  if (["shirt", "t-shirt", "tee", "blouse", "polo"].some(x => s.includes(x))) 
+    return { category: "top", subcategory: "t-shirt" };
+  if (["sweater", "knit", "jumper"].some(x => s.includes(x))) 
+    return { category: "top", subcategory: "sweater" };
+  if (["jacket", "coat", "outerwear", "blazer"].some(x => s.includes(x))) 
+    return { category: "outerwear", subcategory: "jacket" };
+    
+  return { category: "clothing", subcategory: "item" };
+}
+
+// Pick main detection (highest score, then largest area)
+function pickMainDetection(preds: YolosPred[]): YolosPred | null {
+  return preds
+    .filter(p => p.score >= 0.35)
+    .sort((a, b) => {
+      const scoreComp = b.score - a.score;
+      if (scoreComp !== 0) return scoreComp;
+      
+      const areaA = (a.box.xmax - a.box.xmin) * (a.box.ymax - a.box.ymin);
+      const areaB = (b.box.xmax - b.box.xmin) * (b.box.ymax - b.box.ymin);
+      return areaB - areaA;
+    })[0] ?? null;
 }
 
 // Caption fallback chain with multiple models
@@ -335,55 +356,73 @@ Deno.serve(async (req) => {
     let cropPath = null;
     let maskPath = null;
 
-    // Check if we should use fashion segmentation
-    const SEGMENT_FOR_ITEMS = (Deno.env.get("SEGMENT_FOR_ITEMS") ?? "0") !== "0";
-    
-    if (SEGMENT_FOR_ITEMS) {
-      console.log("Attempting fashion segmentation...");
-      const segResult = await tryFashionSegmentation(base64Image);
-      trace.push(...segResult.trace);
+    // Try YOLOS fashion detection
+    const fUrl = Deno.env.get("FASHION_SEG_URL");
+    const fTok = Deno.env.get("FASHION_API_TOKEN");
+    const fHdr = Deno.env.get("FASHION_AUTH_HEADER") || "Authorization";
+    const fPfx = Deno.env.get("FASHION_AUTH_PREFIX") || "Bearer";
+    const fHeaders = fTok ? { 
+      [fHdr]: fPfx ? `${fPfx} ${fTok}` : fTok, 
+      "Accept": "application/json", 
+      "Content-Type": "application/json" 
+    } : {};
 
-      if (segResult.success && segResult.detection) {
-        console.log("Fashion segmentation successful");
-        const detection = segResult.detection;
+    let preds: YolosPred[] = [];
+    if (fUrl) {
+      console.log("Attempting YOLOS detection...");
+      const startTime = Date.now();
+      
+      try {
+        // Try raw base64 first
+        let res = await fetch(fUrl, { 
+          method: "POST", 
+          headers: fHeaders, 
+          body: JSON.stringify({ inputs: base64Image }) 
+        });
         
-        // Map category
-        const categoryMap = mapFashionCategory(detection.category || detection.label || "top");
-        category = categoryMap.category;
-        subcategory = categoryMap.subcategory;
+        // Fallback to data URL format if 415/400
+        if (res.status === 415 || res.status === 400) {
+          console.log("Retrying with data URL format...");
+          res = await fetch(fUrl, { 
+            method: "POST", 
+            headers: fHeaders, 
+            body: JSON.stringify({ inputs: `data:image/png;base64,${base64Image}` }) 
+          });
+        }
         
-        // Store attributes if available
-        if (detection.attributes) {
-          attributes = detection.attributes;
+        const status = res.status;
+        const ms = Date.now() - startTime;
+        
+        if (res.ok) {
+          preds = await res.json().catch(() => []);
+          console.log("YOLOS detection successful, predictions:", preds.length);
+          trace.push({ step: "FASHION_SEG", status, ms, count: Array.isArray(preds) ? preds.length : 0 });
+        } else {
+          trace.push({ step: "FASHION_SEG", status, ms, error: `HTTP ${status}` });
         }
-
-        // Extract color from crop if available
-        const cropImageB64 = segResult.crop || base64Image;
-        const colorData = await extractDominantColor(cropImageB64);
-        colorHex = colorData.hex;
-        colorName = colorData.name;
-
-        // Save crop and mask if available
-        if (segResult.crop) {
-          const cropBuffer = Uint8Array.from(atob(segResult.crop), c => c.charCodeAt(0));
-          const userId = imagePath.split('/')[0]; // Extract user ID from path
-          cropPath = `${userId}/crops/${itemId}.png`;
-          
-          await supabase.storage
-            .from('sila')
-            .upload(cropPath, cropBuffer, { contentType: 'image/png', upsert: true });
-        }
-
-        if (segResult.mask) {
-          const maskBuffer = Uint8Array.from(atob(segResult.mask), c => c.charCodeAt(0));
-          const userId = imagePath.split('/')[0];
-          maskPath = `${userId}/masks/${itemId}.png`;
-          
-          await supabase.storage
-            .from('sila')
-            .upload(maskPath, maskBuffer, { contentType: 'image/png', upsert: true });
-        }
+      } catch (error) {
+        const ms = Date.now() - startTime;
+        console.error("YOLOS detection error:", error);
+        trace.push({ step: "FASHION_SEG", status: 0, ms, error: error.message });
       }
+    } else {
+      trace.push({ step: "FASHION_SEG", status: "not_configured" });
+    }
+
+    // Process YOLOS predictions
+    const mainDetection = Array.isArray(preds) ? pickMainDetection(preds) : null;
+    if (mainDetection) {
+      console.log("Main detection:", mainDetection);
+      const { category: detectedCategory, subcategory: detectedSubcategory } = mapFashionLabel(mainDetection.label);
+      category = detectedCategory;
+      subcategory = detectedSubcategory;
+      
+      // Extract color from full image (will upgrade to bbox crop later)
+      const colorData = await extractDominantColor(base64Image);
+      colorHex = colorData.hex;
+      colorName = colorData.name;
+    } else if (fUrl) {
+      trace.push({ step: "FASHION_SEG", status: 204, error: "no-detections" });
     }
 
     // Fallback to caption if no fashion segmentation or if it failed
@@ -454,7 +493,7 @@ Deno.serve(async (req) => {
         const embedHeaders = buildInferenceHeaders();
         const embedStartTime = Date.now();
         
-        const embedImageB64 = cropPath ? (segResult?.crop || base64Image) : base64Image;
+        const embedImageB64 = base64Image; // Use full image since YOLOS doesn't provide crops yet
         const embedResponse = await fetch(EMBED_URL, {
           method: "POST",
           headers: embedHeaders,

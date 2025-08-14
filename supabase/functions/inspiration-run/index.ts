@@ -129,41 +129,45 @@ function mapRgbToColorName(r: number, g: number, b: number): string {
   return "brown";
 }
 
-// Taxonomy mapping functions  
-function mapFashionCategory(detectedCategory: string): { category: string; subcategory: string } {
-  const categoryMap: Record<string, { category: string; subcategory: string }> = {
-    'top': { category: 'top', subcategory: 't-shirt' },
-    'shirt': { category: 'top', subcategory: 'shirt' },
-    'blouse': { category: 'top', subcategory: 'blouse' },
-    'sweater': { category: 'top', subcategory: 'sweater' },
-    'dress': { category: 'dress', subcategory: 'dress' },
-    'skirt': { category: 'bottom', subcategory: 'skirt' },
-    'pants': { category: 'bottom', subcategory: 'trousers' },
-    'trousers': { category: 'bottom', subcategory: 'trousers' },
-    'shorts': { category: 'bottom', subcategory: 'shorts' },
-    'jeans': { category: 'bottom', subcategory: 'jeans' },
-    'boots': { category: 'shoes', subcategory: 'boots' },
-    'sneakers': { category: 'shoes', subcategory: 'sneakers' },
-    'footwear': { category: 'shoes', subcategory: 'shoes' },
-    'bag': { category: 'bag', subcategory: 'handbag' },
-    'handbag': { category: 'bag', subcategory: 'handbag' },
-    'backpack': { category: 'bag', subcategory: 'backpack' },
-    'belt': { category: 'accessory', subcategory: 'belt' },
-    'sunglasses': { category: 'accessory', subcategory: 'sunglasses' },
-    'hat': { category: 'accessory', subcategory: 'hat' },
-    'headwear': { category: 'accessory', subcategory: 'hat' },
-    'scarf': { category: 'accessory', subcategory: 'scarf' },
-    'coat': { category: 'outerwear', subcategory: 'coat' },
-    'jacket': { category: 'outerwear', subcategory: 'jacket' }
-  };
-
-  const detected = detectedCategory.toLowerCase();
-  return categoryMap[detected] || { category: 'top', subcategory: 't-shirt' };
+// YOLOS label mapping to our taxonomy
+function mapFashionLabel(label: string): { category: string; subcategory: string } {
+  const s = label.toLowerCase();
+  
+  if (["handbag", "bag", "tote bag", "shoulder bag"].some(x => s.includes(x))) 
+    return { category: "bag", subcategory: "handbag" };
+  if (["backpack"].some(x => s.includes(x))) 
+    return { category: "bag", subcategory: "backpack" };
+  if (["belt"].some(x => s.includes(x))) 
+    return { category: "accessory", subcategory: "belt" };
+  if (["sunglasses", "glasses"].some(x => s.includes(x))) 
+    return { category: "accessory", subcategory: "sunglasses" };
+  if (["hat", "cap", "beanie"].some(x => s.includes(x))) 
+    return { category: "accessory", subcategory: "hat" };
+  if (["boots"].some(x => s.includes(x))) 
+    return { category: "shoes", subcategory: "boots" };
+  if (["sneaker", "shoe", "trainer"].some(x => s.includes(x))) 
+    return { category: "shoes", subcategory: "sneakers" };
+  if (["dress"].some(x => s.includes(x))) 
+    return { category: "dress", subcategory: "dress" };
+  if (["skirt"].some(x => s.includes(x))) 
+    return { category: "bottom", subcategory: "skirt" };
+  if (["jeans", "pants", "trousers"].some(x => s.includes(x))) 
+    return { category: "bottom", subcategory: "trousers" };
+  if (["shorts"].some(x => s.includes(x))) 
+    return { category: "bottom", subcategory: "shorts" };
+  if (["shirt", "t-shirt", "tee", "blouse", "polo"].some(x => s.includes(x))) 
+    return { category: "top", subcategory: "t-shirt" };
+  if (["sweater", "knit", "jumper"].some(x => s.includes(x))) 
+    return { category: "top", subcategory: "sweater" };
+  if (["jacket", "coat", "outerwear", "blazer"].some(x => s.includes(x))) 
+    return { category: "outerwear", subcategory: "jacket" };
+    
+  return { category: "clothing", subcategory: "item" };
 }
 
-// Fashion segmentation for multi-item images
+// YOLOS object detection for multi-item images
 async function createRealDetections(queryId: string, imagePath: string, supabase: any) {
-  console.log("Creating real fashion detections for query:", queryId, "image:", imagePath);
+  console.log("Creating YOLOS fashion detections for query:", queryId, "image:", imagePath);
   
   const FSEG_URL = Deno.env.get("FASHION_SEG_URL");
   if (!FSEG_URL) {
@@ -184,81 +188,73 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
     const imageBuffer = new Uint8Array(await downloadData.arrayBuffer());
     const base64Image = uint8ToBase64(imageBuffer);
 
-    // Call fashion segmentation
+    // Call YOLOS detection
     const headers = buildFashionHeaders();
-    const body = { inputs: base64Image, format: "base64" };
     
-    const response = await fetch(FSEG_URL, {
+    // Try raw base64 first
+    let response = await fetch(FSEG_URL, {
       method: "POST",
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify({ inputs: base64Image })
     });
 
+    // Fallback to data URL format if 415/400
+    if (response.status === 415 || response.status === 400) {
+      console.log("Retrying YOLOS with data URL format...");
+      response = await fetch(FSEG_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ inputs: `data:image/png;base64,${base64Image}` })
+      });
+    }
+
     if (!response.ok) {
-      console.log("Fashion segmentation failed, using stub detections");
+      console.log("YOLOS detection failed, using stub detections");
       return createStubDetections(queryId, supabase);
     }
 
     const result = await response.json();
     
-    // Handle different response formats
-    let detections = Array.isArray(result) ? result : [result];
-    if (result.predictions) detections = result.predictions;
-    if (result.detections) detections = result.detections;
-
-    if (!detections || detections.length === 0) {
-      console.log("No detections found, using stub detections");
+    if (!Array.isArray(result) || result.length === 0) {
+      console.log("No YOLOS detections found, using stub detections");
       return createStubDetections(queryId, supabase);
     }
 
-    console.log(`Found ${detections.length} fashion detections`);
+    // Filter and limit detections (top 6, score >= 0.35)
+    const maxDetections = 6;
+    const filteredDetections = result
+      .filter(pred => pred.score >= 0.35)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, maxDetections);
+
+    console.log(`Found ${filteredDetections.length} YOLOS detections (from ${result.length} total)`);
 
     const insertData = [];
     const userId = imagePath.split('/')[0]; // Extract user ID from path
 
-    for (let i = 0; i < detections.length; i++) {
-      const detection = detections[i];
+    for (let i = 0; i < filteredDetections.length; i++) {
+      const pred = filteredDetections[i];
       
-      // Map category
-      const categoryMap = mapFashionCategory(detection.category || detection.label || "top");
+      // Map YOLOS label to our taxonomy
+      const { category, subcategory } = mapFashionLabel(pred.label);
       
-      // Extract color from crop
-      const cropImageB64 = detection.crop_b64 || base64Image;
-      const colorData = await extractDominantColor(cropImageB64);
+      // Extract bbox coordinates
+      const bbox = [pred.box.xmin, pred.box.ymin, pred.box.xmax, pred.box.ymax];
 
-      // Save crop and mask images
-      let cropPath = null;
-      let maskPath = null;
+      // Extract color from full image (will upgrade to bbox crop later)
+      const colorData = await extractDominantColor(base64Image);
 
-      if (detection.crop_b64) {
-        const cropBuffer = Uint8Array.from(atob(detection.crop_b64), c => c.charCodeAt(0));
-        cropPath = `${userId}/inspiration_crops/${queryId}_${i}.png`;
-        
-        await supabase.storage
-          .from('sila')
-          .upload(cropPath, cropBuffer, { contentType: 'image/png', upsert: true });
-      }
-
-      if (detection.mask_b64) {
-        const maskBuffer = Uint8Array.from(atob(detection.mask_b64), c => c.charCodeAt(0));
-        maskPath = `${userId}/inspiration_masks/${queryId}_${i}.png`;
-        
-        await supabase.storage
-          .from('sila')
-          .upload(maskPath, maskBuffer, { contentType: 'image/png', upsert: true });
-      }
-
-      // Try to get embedding if EMBED_URL is configured
+      // Try to get embedding if EMBED_URL is configured (use full image for now)
       let embedding = null;
       const EMBED_URL = Deno.env.get("EMBED_URL");
       
-      if (EMBED_URL && detection.crop_b64) {
+      if (EMBED_URL) {
         try {
           const embedHeaders = buildInferenceHeaders();
           const embedResponse = await fetch(EMBED_URL, {
             method: "POST",
             headers: embedHeaders,
-            body: JSON.stringify({ inputs: detection.crop_b64 })
+            body: JSON.stringify({ inputs: base64Image })
           });
 
           if (embedResponse.ok) {
@@ -273,10 +269,14 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
 
       insertData.push({
         query_id: queryId,
-        bbox: detection.bbox || [100 + i * 20, 150 + i * 50, 300 + i * 20, 450 + i * 50],
-        category: categoryMap.category,
-        crop_path: cropPath,
-        mask_path: maskPath,
+        bbox,
+        category,
+        subcategory,
+        confidence: pred.score,
+        color_name: colorData.colorName,
+        color_hex: colorData.colorHex,
+        crop_path: null, // YOLOS doesn't provide crops yet
+        mask_path: null, // YOLOS doesn't provide masks
         embedding
       });
     }
@@ -291,7 +291,7 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
       throw new Error(`Failed to insert detections: ${error.message}`);
     }
 
-    console.log(`Created ${data.length} real fashion detections`);
+    console.log(`Created ${data.length} YOLOS fashion detections`);
     return data;
 
   } catch (error) {
