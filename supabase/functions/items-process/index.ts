@@ -85,8 +85,8 @@ Deno.serve(async (req) => {
     const SEGMENT_URL = Deno.env.get("SEGMENT_URL");
     const EMBED_URL = Deno.env.get("EMBED_URL");
     
-    if (!DETECT_URL || !SEGMENT_URL || !EMBED_URL) {
-      throw new Error("Missing DETECT_URL, SEGMENT_URL, or EMBED_URL");
+    if (!DETECT_URL || !EMBED_URL) {
+      throw new Error("Missing DETECT_URL or EMBED_URL");
     }
     const infHeaders = buildInferenceHeaders();
 
@@ -111,18 +111,28 @@ Deno.serve(async (req) => {
     const category = detectData.category || "clothing";
     const subcategory = detectData.subcategory || "item";
 
-    // STEP 2: SEGMENT
-    console.log(`[SEGMENT] Starting segmentation...`);
-    const segmentData = await callInferenceWithRetry(
-      SEGMENT_URL, 
-      { image: base64Image, bbox, format: "base64" }, 
-      "SEGMENT", 
-      infHeaders
-    );
+    // STEP 2: SEGMENT (optional)
+    let maskBase64 = null;
+    let cropBase64 = base64Image; // default to original image
     
-    const maskBase64 = segmentData?.mask;
-    const cropBase64 = segmentData?.crop;
-    if (!maskBase64 || !cropBase64) throw new Error("Segmentation returned no mask/crop");
+    if (SEGMENT_URL) {
+      console.log(`[SEGMENT] Starting segmentation...`);
+      const segmentData = await callInferenceWithRetry(
+        SEGMENT_URL, 
+        { image: base64Image, bbox, format: "base64" }, 
+        "SEGMENT", 
+        infHeaders
+      );
+      
+      maskBase64 = segmentData?.mask || null;
+      cropBase64 = segmentData?.crop || base64Image;
+      
+      if (!segmentData?.crop) {
+        console.log(`[SEGMENT] Warning: No crop returned, using original image`);
+      }
+    } else {
+      console.log(`[SEGMENT] Skipped - no SEGMENT_URL configured`);
+    }
 
     // Store mask/crop
     const parts = imagePath.split("/");
@@ -132,7 +142,11 @@ Deno.serve(async (req) => {
     const cropPath = `${userId}/items/${itemUuid}-crop.png`;
 
     const toBytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    await supabase.storage.from("sila").upload(maskPath, toBytes(maskBase64), { contentType: "image/png", upsert: true });
+    
+    // Store crop (always) and mask (if available)
+    if (maskBase64) {
+      await supabase.storage.from("sila").upload(maskPath, toBytes(maskBase64), { contentType: "image/png", upsert: true });
+    }
     await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64), { contentType: "image/png", upsert: true });
 
     // STEP 3: EMBED
@@ -157,7 +171,9 @@ Deno.serve(async (req) => {
     const color_name = "brown"; // placeholder
     
     const { error: updErr } = await supabase.from("items").update({
-      category, subcategory, color_hex, color_name, mask_path: maskPath, crop_path: cropPath,
+      category, subcategory, color_hex, color_name, 
+      mask_path: maskBase64 ? maskPath : null, 
+      crop_path: cropPath,
     }).eq("id", itemId);
     if (updErr) throw updErr;
 
