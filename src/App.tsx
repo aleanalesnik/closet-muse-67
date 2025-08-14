@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import InspoTest from "./pages/InspoTest";
 import Inspiration from "./pages/Inspiration";
+import ItemDetailPage from "./pages/ItemDetailPage";
 import MagicLinkSignIn from "./pages/auth/MagicLinkSignIn";
 import AuthCallback from "./pages/auth/AuthCallback";
 import NotFound from "./pages/NotFound";
@@ -22,6 +23,7 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/inspo-test" element={<InspoTest />} />
           <Route path="/inspiration" element={<Inspiration />} />
+          <Route path="/item/:id" element={<ItemDetailPage />} />
           <Route path="/sign-in-magic" element={<MagicLinkSignIn />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

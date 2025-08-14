@@ -104,6 +104,7 @@ export type Database = {
       }
       items: {
         Row: {
+          brand: string | null
           category: string | null
           color_hex: string | null
           color_name: string | null
@@ -118,6 +119,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          brand?: string | null
           category?: string | null
           color_hex?: string | null
           color_name?: string | null
@@ -132,6 +134,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          brand?: string | null
           category?: string | null
           color_hex?: string | null
           color_name?: string | null
@@ -225,6 +228,19 @@ export type Database = {
       l2_normalize: {
         Args: { "": string } | { "": unknown } | { "": unknown }
         Returns: unknown
+      }
+      match_user_items: {
+        Args: { p_owner: string; p_query: string; p_limit?: number }
+        Returns: {
+          item_id: string
+          score: number
+          title: string
+          category: string
+          subcategory: string
+          color_hex: string
+          color_name: string
+          image_path: string
+        }[]
       }
       sparsevec_out: {
         Args: { "": unknown }
