@@ -125,69 +125,116 @@ const CAT: Record<string,"top"|"bottom"|"shoes"|"bag"|"accessory"> = {
   "scarf":"accessory","sunglasses":"accessory"
 };
 
-// Caption → label identification
-async function labelFromCaption(b64: string) {
-  const CAPTION_URL_RAW = Deno.env.get("CAPTION_URL");
-  console.log("[CAPTION] Raw CAPTION_URL:", CAPTION_URL_RAW);
-  const CAPTION_URL = normalizeSecret(CAPTION_URL_RAW);
-  console.log("[CAPTION] Normalized CAPTION_URL:", CAPTION_URL);
-  if (!CAPTION_URL) {
-    console.log("[CAPTION] No CAPTION_URL configured after normalization");
-    return {};
-  }
+// Caption fallback chain with multiple models
+async function labelFromCaption(b64: string, trace: Array<any>) {
+  const CAPTION_URLS_RAW = Deno.env.get("CAPTION_URLS");
+  const urls = CAPTION_URLS_RAW 
+    ? CAPTION_URLS_RAW.split(",").map(u => u.trim())
+    : [
+        "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base",
+        "https://api-inference.huggingface.co/models/microsoft/git-base", 
+        "https://api-inference.huggingface.co/models/microsoft/git-large-coco",
+        "https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning"
+      ];
   
+  console.log("[CAPTION] Trying", urls.length, "caption models");
   const infHeaders = buildInferenceHeaders();
-  console.log("[CAPTION] Headers:", Object.keys(infHeaders));
   
-  const body = isHFHosted(CAPTION_URL) ? { inputs: b64 } : { image: b64, format: "base64" };
-  console.log("[CAPTION] Making request to:", CAPTION_URL, "body type:", isHFHosted(CAPTION_URL) ? "HF hosted" : "custom");
-  
-  try {
-    const r = await fetch(CAPTION_URL, {
-      method: "POST",
-      headers: { ...infHeaders, Accept: "application/json" },
-      body: JSON.stringify(body)
-    });
-    console.log("[CAPTION] Response status:", r.status);
-    if (!r.ok) {
-      const errorText = await r.text().catch(() => "");
-      console.warn("[CAPTION] Error response:", errorText.slice(0, 200));
-      return {};
-    }
-
-    const j = await r.json().catch(() => ({}));
-    const raw = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
-    console.log("[CAPTION] Raw caption:", raw);
-    if (!raw) return {};
-    const lc = ` ${raw.toLowerCase()} `;
-    console.log("[CAPTION] Lowercased with spaces:", lc);
-
-    // exact vocab hit
-    for (const v of VOCAB) {
-      if (lc.includes(` ${v} `)) {
-        console.log("[CAPTION] Found exact vocab match:", v);
-        return { sub: v, cat: CAT[v], caption: raw, conf: 0.7 };
+  for (const url of urls) {
+    const startTime = Date.now();
+    console.log("[CAPTION] Trying:", url);
+    
+    // Try JSON base64 format first
+    try {
+      const jsonBody = { inputs: `data:image/png;base64,${b64}` };
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { ...infHeaders, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(jsonBody)
+      });
+      
+      const ms = Date.now() - startTime;
+      console.log("[CAPTION] JSON response:", r.status, "in", ms + "ms");
+      
+      if (r.ok) {
+        const j = await r.json().catch(() => ({}));
+        const raw = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
+        
+        trace.push({ step: "CAPTION", url, status: r.status, ms, mode: "json" });
+        
+        if (raw) {
+          console.log("[CAPTION] SUCCESS with JSON:", raw);
+          return parseCaption(raw);
+        }
+      } else if (r.status === 415) {
+        // Try raw bytes format
+        console.log("[CAPTION] JSON 415, trying raw bytes...");
+        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        
+        const r2 = await fetch(url, {
+          method: "POST", 
+          headers: { ...infHeaders, "Content-Type": "image/png", Accept: "application/json" },
+          body: bytes
+        });
+        
+        const ms2 = Date.now() - startTime;
+        console.log("[CAPTION] Bytes response:", r2.status, "in", ms2 + "ms");
+        
+        if (r2.ok) {
+          const j2 = await r2.json().catch(() => ({}));
+          const raw2 = Array.isArray(j2) ? (j2[0]?.generated_text ?? j2[0]?.summary_text) : (j2.generated_text ?? j2.caption ?? "");
+          
+          trace.push({ step: "CAPTION", url, status: r2.status, ms: ms2, mode: "bytes" });
+          
+          if (raw2) {
+            console.log("[CAPTION] SUCCESS with bytes:", raw2);
+            return parseCaption(raw2);
+          }
+        } else {
+          trace.push({ step: "CAPTION", url, status: r2.status, ms: ms2, mode: "bytes", error: `HTTP ${r2.status}` });
+        }
+      } else {
+        trace.push({ step: "CAPTION", url, status: r.status, ms, mode: "json", error: `HTTP ${r.status}` });
       }
+    } catch (error) {
+      const ms = Date.now() - startTime;
+      console.warn("[CAPTION] Error with", url + ":", error.message);
+      trace.push({ step: "CAPTION", url, status: 0, ms, mode: "json", error: error.message });
     }
-
-    // synonyms → canonical
-    const tokens = lc.replace(/[^a-z\s-]/g," ").split(/\s+/).filter(Boolean);
-    console.log("[CAPTION] Tokens for synonym matching:", tokens.slice(0, 10));
-    for (let i=0;i<tokens.length;i++){
-      const w1 = tokens[i];
-      const w2 = i+1 < tokens.length ? `${w1} ${tokens[i+1]}` : w1;
-      const cand = CANON[w2] || CANON[w1];
-      if (cand) {
-        console.log("[CAPTION] Found synonym match:", w2 || w1, "->", cand);
-        return { sub: cand, cat: CAT[cand], caption: raw, conf: 0.6 };
-      }
-    }
-    console.log("[CAPTION] No matches found, returning caption only");
-    return { caption: raw };
-  } catch (error) {
-    console.error("[CAPTION] Fetch error:", error.message);
-    return {};
   }
+  
+  console.log("[CAPTION] All models failed");
+  return {};
+}
+
+// Parse caption text and extract labels
+function parseCaption(raw: string) {
+  console.log("[CAPTION] Raw caption:", raw);
+  const lc = ` ${raw.toLowerCase()} `;
+  console.log("[CAPTION] Lowercased with spaces:", lc);
+
+  // exact vocab hit
+  for (const v of VOCAB) {
+    if (lc.includes(` ${v} `)) {
+      console.log("[CAPTION] Found exact vocab match:", v);
+      return { sub: v, cat: CAT[v], caption: raw, conf: 0.7 };
+    }
+  }
+
+  // synonyms → canonical
+  const tokens = lc.replace(/[^a-z\s-]/g," ").split(/\s+/).filter(Boolean);
+  console.log("[CAPTION] Tokens for synonym matching:", tokens.slice(0, 10));
+  for (let i=0;i<tokens.length;i++){
+    const w1 = tokens[i];
+    const w2 = i+1 < tokens.length ? `${w1} ${tokens[i+1]}` : w1;
+    const cand = CANON[w2] || CANON[w1];
+    if (cand) {
+      console.log("[CAPTION] Found synonym match:", w2 || w1, "->", cand);
+      return { sub: cand, cat: CAT[cand], caption: raw, conf: 0.6 };
+    }
+  }
+  console.log("[CAPTION] No matches found, returning caption only");
+  return { caption: raw };
 }
 
 // Text embedding fallback
@@ -259,14 +306,12 @@ Deno.serve(async (req) => {
     // STEP 1: CAPTION FIRST (every time for closet items)
     console.log(`[CAPTION] Starting caption analysis (first step)...`);
     const captionStart = Date.now();
-    const { sub, cat, caption } = await labelFromCaption(base64Image);
+    const { sub, cat, caption } = await labelFromCaption(base64Image, trace);
     const captionMs = Date.now() - captionStart;
     
     if (caption) {
-      trace.push({ step: "CAPTION", status: 200, ms: captionMs });
       console.log(`[CAPTION] SUCCESS: "${caption}" -> subcategory: ${sub || 'none'}, category: ${cat || 'none'} (${captionMs}ms)`);
     } else {
-      trace.push({ step: "CAPTION", status: 0, ms: captionMs, error: "No caption returned" });
       console.log(`[CAPTION] FAILED: No caption returned (${captionMs}ms)`);
     }
     
