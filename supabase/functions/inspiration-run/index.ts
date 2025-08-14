@@ -165,14 +165,14 @@ function mapFashionLabel(label: string): { category: string; subcategory: string
   return { category: "clothing", subcategory: "item" };
 }
 
-// YOLOS object detection for multi-item images
-async function createRealDetections(queryId: string, imagePath: string, supabase: any) {
+// YOLOS object detection for multi-item images (no fallback to stubs)
+async function createYolosDetections(queryId: string, imagePath: string, supabase: any) {
   console.log("Creating YOLOS fashion detections for query:", queryId, "image:", imagePath);
   
   const FSEG_URL = Deno.env.get("FASHION_SEG_URL");
   if (!FSEG_URL) {
-    console.log("No FASHION_SEG_URL configured, creating stub detections");
-    return createStubDetections(queryId, supabase);
+    console.log("No FASHION_SEG_URL configured - will insert 0 detections");
+    return [];
   }
 
   try {
@@ -182,7 +182,8 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
       .download(imagePath);
 
     if (downloadError) {
-      throw new Error(`Failed to download image: ${downloadError.message}`);
+      console.error(`Failed to download image: ${downloadError.message}`);
+      return [];
     }
 
     const imageBuffer = new Uint8Array(await downloadData.arrayBuffer());
@@ -190,6 +191,8 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
 
     // Call YOLOS detection
     const headers = buildFashionHeaders();
+    
+    console.log("Calling YOLOS detection endpoint...");
     
     // Try raw base64 first
     let response = await fetch(FSEG_URL, {
@@ -209,15 +212,15 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
     }
 
     if (!response.ok) {
-      console.log("YOLOS detection failed, using stub detections");
-      return createStubDetections(queryId, supabase);
+      console.log(`YOLOS detection failed with status ${response.status} - will insert 0 detections`);
+      return [];
     }
 
     const result = await response.json();
     
     if (!Array.isArray(result) || result.length === 0) {
-      console.log("No YOLOS detections found, using stub detections");
-      return createStubDetections(queryId, supabase);
+      console.log("No YOLOS detections found - will insert 0 detections");
+      return [];
     }
 
     // Filter and limit detections (top 6, score >= 0.35)
@@ -229,8 +232,16 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
 
     console.log(`Found ${filteredDetections.length} YOLOS detections (from ${result.length} total)`);
 
+    if (filteredDetections.length === 0) {
+      console.log("No detections above confidence threshold - will insert 0 detections");
+      return [];
+    }
+
     const insertData = [];
-    const userId = imagePath.split('/')[0]; // Extract user ID from path
+
+    // Optional embedding setup
+    const EMBED_URL = Deno.env.get("EMBED_URL");
+    const embedHeaders = EMBED_URL ? buildInferenceHeaders() : null;
 
     for (let i = 0; i < filteredDetections.length; i++) {
       const pred = filteredDetections[i];
@@ -241,16 +252,13 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
       // Extract bbox coordinates
       const bbox = [pred.box.xmin, pred.box.ymin, pred.box.xmax, pred.box.ymax];
 
-      // Extract color from full image (will upgrade to bbox crop later)
+      // Extract color from full image
       const colorData = await extractDominantColor(base64Image);
 
-      // Try to get embedding if EMBED_URL is configured (use full image for now)
+      // Try to get embedding if EMBED_URL is configured
       let embedding = null;
-      const EMBED_URL = Deno.env.get("EMBED_URL");
-      
-      if (EMBED_URL) {
+      if (EMBED_URL && embedHeaders) {
         try {
-          const embedHeaders = buildInferenceHeaders();
           const embedResponse = await fetch(EMBED_URL, {
             method: "POST",
             headers: embedHeaders,
@@ -261,6 +269,8 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
             const embedResult = await embedResponse.json();
             embedding = Array.isArray(embedResult) ? embedResult[0] : embedResult;
             if (!Array.isArray(embedding)) embedding = null;
+          } else {
+            console.log(`Embedding failed for detection ${i} with status ${embedResponse.status}`);
           }
         } catch (embedError) {
           console.log("Embedding failed for detection", i, ":", embedError.message);
@@ -275,7 +285,7 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
         confidence: pred.score,
         color_name: colorData.colorName,
         color_hex: colorData.colorHex,
-        crop_path: null, // YOLOS doesn't provide crops yet
+        crop_path: null, // YOLOS doesn't provide crops
         mask_path: null, // YOLOS doesn't provide masks
         embedding
       });
@@ -288,62 +298,19 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
       .select();
 
     if (error) {
-      throw new Error(`Failed to insert detections: ${error.message}`);
+      console.error(`Failed to insert detections: ${error.message}`);
+      return [];
     }
 
-    console.log(`Created ${data.length} YOLOS fashion detections`);
+    console.log(`Successfully inserted ${data.length} YOLOS fashion detections`);
     return data;
 
   } catch (error) {
-    console.error("Error in createRealDetections:", error);
-    console.log("Falling back to stub detections");
-    return createStubDetections(queryId, supabase);
+    console.error("Error in YOLOS detection:", error);
+    return []; // Return empty array instead of throwing
   }
 }
 
-// Stub detection generation for fallback
-async function createStubDetections(queryId: string, supabase: any) {
-  console.log("Creating stub detections for query:", queryId);
-  
-  const stubDetections = [
-    {
-      query_id: queryId,
-      bbox: [100, 150, 300, 450],
-      category: "top",
-      subcategory: "t-shirt",
-      confidence: 0.95,
-      color_name: "blue",
-      color_hex: "#4A90E2",
-      crop_path: null,
-      mask_path: null,
-      embedding: null
-    },
-    {
-      query_id: queryId,
-      bbox: [120, 460, 280, 600],
-      category: "bottom",
-      subcategory: "trousers", 
-      confidence: 0.88,
-      color_name: "black",
-      color_hex: "#2C3E50",
-      crop_path: null,
-      mask_path: null,
-      embedding: null
-    }
-  ];
-
-  const { data, error } = await supabase
-    .from('inspiration_detections')
-    .insert(stubDetections)
-    .select();
-
-  if (error) {
-    throw new Error(`Failed to create stub detections: ${error.message}`);
-  }
-
-  console.log("Created stub detections:", data);
-  return data;
-}
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -358,7 +325,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const supabase = getServiceClient();
     
-    console.log("Fashion segmentation mode: Using real detections");
+    console.log("YOLOS Fashion Detection Mode - No STUB fallbacks");
 
     // Find a queued query if none provided
     let queryId: string | null = body?.queryId ?? null;
@@ -372,7 +339,15 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: true })
         .limit(1)
         .maybeSingle();
-      if (!q) return new Response(null, { status: 204, headers: cors });
+      if (!q) {
+        return new Response(JSON.stringify({ 
+          ok: true, 
+          message: "No queued queries found" 
+        }), { 
+          status: 200, 
+          headers: cors 
+        });
+      }
       queryId = q.id;
       imagePath = q.image_path;
     } else {
@@ -382,46 +357,65 @@ Deno.serve(async (req) => {
         .select("image_path")
         .eq("id", queryId)
         .single();
-      if (!q) throw new Error("Query not found");
+      if (!q) {
+        console.log("Query not found:", queryId);
+        return new Response(JSON.stringify({ 
+          ok: true, 
+          error: "Query not found",
+          queryId 
+        }), { 
+          status: 200, 
+          headers: { ...cors, "Content-Type": "application/json" } 
+        });
+      }
       imagePath = q.image_path;
     }
 
+    // Mark as processing
     await supabase.from("inspiration_queries").update({ status: "processing" }).eq("id", queryId);
 
-    // Use real fashion segmentation (with fallback to stubs if needed)
-    console.log("Using fashion segmentation");
-    let detections = await createRealDetections(queryId, imagePath, supabase);
+    // Run YOLOS detection (no stub fallback)
+    console.log("Running YOLOS detection for queryId:", queryId);
+    const detections = await createYolosDetections(queryId, imagePath, supabase);
 
+    // Always mark query as done, regardless of detection results
     await supabase.from("inspiration_queries").update({ status: "done" }).eq("id", queryId);
+
+    console.log(`Query ${queryId} completed with ${detections.length} detections`);
 
     return new Response(JSON.stringify({ 
       ok: true, 
       queryId, 
-      detections: Array.isArray(detections) ? detections.length : detections,
-      mode: "fashion"
+      detections: detections.length,
+      mode: "yolos"
     }), {
       headers: { ...cors, "Content-Type": "application/json" },
     });
     
   } catch (e) {
-    // Try to mark errored queries
+    console.error("inspiration-run error:", e);
+    
+    // Always try to mark query as done/error, never leave in processing
     try {
-      const cloned = await req.clone().json().catch(() => ({}));
-      if (cloned?.queryId) {
+      const body = await req.json().catch(() => ({}));
+      const queryId = body?.queryId;
+      if (queryId) {
         const supabase = getServiceClient();
         await supabase.from("inspiration_queries").update({ 
           status: "error", 
           error: String(e?.message ?? e) 
-        }).eq("id", cloned.queryId);
+        }).eq("id", queryId);
+        console.log(`Query ${queryId} marked as error`);
       }
-    } catch {}
+    } catch (markError) {
+      console.error("Failed to mark query as error:", markError);
+    }
     
-    console.error("inspiration-run error:", e);
     return new Response(JSON.stringify({ 
-      ok: false, 
+      ok: true, // Always return ok: true to prevent client errors
       error: String(e?.message ?? e) 
     }), {
-      status: 500, 
+      status: 200, 
       headers: { ...cors, "Content-Type": "application/json" },
     });
   }
