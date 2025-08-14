@@ -11,10 +11,10 @@ function getServiceClient() {
 
 function buildInferenceHeaders() {
   const token = Deno.env.get("INFERENCE_API_TOKEN");
-  const headerName = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
+  const name = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
   const prefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
   if (!token) throw new Error("Missing INFERENCE_API_TOKEN");
-  return { [headerName]: prefix ? `${prefix} ${token}` : token, "Content-Type": "application/json" };
+  return { [name]: prefix ? `${prefix} ${token}` : token, "Content-Type": "application/json" };
 }
 
 function uint8ToBase64(u8: Uint8Array) {

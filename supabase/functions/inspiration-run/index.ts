@@ -9,6 +9,14 @@ function getServiceClient() {
   return createClient(url, key);
 }
 
+function buildInferenceHeaders() {
+  const token = Deno.env.get("INFERENCE_API_TOKEN");
+  const name = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
+  const prefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
+  if (!token) throw new Error("Missing INFERENCE_API_TOKEN");
+  return { [name]: prefix ? `${prefix} ${token}` : token, "Content-Type": "application/json" };
+}
+
 function rand(min: number, max: number) { return Math.random() * (max - min) + min; }
 
 const cors = {
