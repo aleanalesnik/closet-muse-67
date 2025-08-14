@@ -125,7 +125,7 @@ function mapFashionLabel(label: string): { category: string; subcategory: string
     return { category: "bag", subcategory: "handbag" };
   if (["backpack"].some(x => s.includes(x))) 
     return { category: "bag", subcategory: "backpack" };
-  if (["belt"].some(x => s.includes(x))) 
+  if (["belt", "buckle", "waistband"].some(x => s.includes(x))) 
     return { category: "accessory", subcategory: "belt" };
   if (["sunglasses", "glasses"].some(x => s.includes(x))) 
     return { category: "accessory", subcategory: "sunglasses" };
@@ -323,7 +323,7 @@ Deno.serve(async (req) => {
       const startTime = Date.now();
       
       try {
-        // Try raw base64 first with lower threshold for small items like belts
+        // First attempt with threshold 0.12
         let res = await fetch(fUrl, { 
           method: "POST", 
           headers: fHeaders, 
@@ -345,15 +345,48 @@ Deno.serve(async (req) => {
         
         if (res.ok) {
           preds = await res.json().catch(() => []);
-          console.log("YOLOS detection successful, predictions:", preds.length);
+          console.log("YOLOS detection (threshold 0.12) successful, predictions:", preds.length);
+          
+          // If no detections, try with lower threshold
+          if (Array.isArray(preds) && preds.length === 0) {
+            console.log("No detections at threshold 0.12, trying 0.06...");
+            const secondStartTime = Date.now();
+            
+            let res2 = await fetch(fUrl, { 
+              method: "POST", 
+              headers: fHeaders, 
+              body: JSON.stringify({ inputs: base64Image, parameters: { threshold: 0.06 } }) 
+            });
+            
+            if (res2.status === 415 || res2.status === 400) {
+              res2 = await fetch(fUrl, { 
+                method: "POST", 
+                headers: fHeaders, 
+                body: JSON.stringify({ inputs: `data:image/png;base64,${base64Image}`, parameters: { threshold: 0.06 } }) 
+              });
+            }
+            
+            if (res2.ok) {
+              preds = await res2.json().catch(() => []);
+              console.log("YOLOS detection (threshold 0.06) successful, predictions:", preds.length);
+              const secondMs = Date.now() - secondStartTime;
+              trace.push({ step: "FASHION_SEG_RETRY", status: res2.status, ms: secondMs, threshold: 0.06, count: Array.isArray(preds) ? preds.length : 0 });
+            }
+          }
+          
           trace.push({ step: "FASHION_SEG", status, ms, count: Array.isArray(preds) ? preds.length : 0 });
           
-          // Log raw predictions for debugging (dev only)
+          // Log raw predictions for debugging (dev only) with box dimensions
           if (debug && Array.isArray(preds)) {
             const top5 = preds
               .sort((a, b) => b.score - a.score)
               .slice(0, 5)
-              .map(p => ({ label: p.label, score: Math.round(p.score * 1000) / 1000 }));
+              .map(p => ({ 
+                label: p.label, 
+                score: Math.round(p.score * 1000) / 1000,
+                w: Math.round((p.box.xmax - p.box.xmin) * 1000) / 1000,
+                h: Math.round((p.box.ymax - p.box.ymin) * 1000) / 1000
+              }));
             trace.push({ step: "FASHION_SEG_RAW", top: top5 });
           }
         } else {
@@ -379,6 +412,8 @@ Deno.serve(async (req) => {
       subcategory = detectedSubcategory;
       bbox = [mainDetection.box.xmin, mainDetection.box.ymin, mainDetection.box.xmax, mainDetection.box.ymax];
       
+      trace.push({ step: "LABEL", source: "yolos", base: { label: mainDetection.label, score: mainDetection.score }, final: `${category}/${subcategory}` });
+      
       // Step 3: Compute color from full image
       console.log("Step 3: Computing color...");
       try {
@@ -389,6 +424,44 @@ Deno.serve(async (req) => {
       } catch (colorError) {
         console.warn("Color extraction failed:", colorError.message);
         trace.push({ step: "COLOR", status: 0, error: colorError.message });
+      }
+    } else if (Array.isArray(preds) && preds.length > 0) {
+      // Belt geometry heuristic: find max aspect ratio box
+      console.log("Step 2b: Checking belt geometry heuristic...");
+      const maxAspectBox = preds.reduce((max, pred) => {
+        const w = pred.box.xmax - pred.box.xmin;
+        const h = pred.box.ymax - pred.box.ymin;
+        const aspect = w / h;
+        const maxW = max.box.xmax - max.box.xmin;
+        const maxH = max.box.ymax - max.box.ymin;
+        const maxAspect = maxW / maxH;
+        return aspect > maxAspect ? pred : max;
+      }, preds[0]);
+      
+      const w = maxAspectBox.box.xmax - maxAspectBox.box.xmin;
+      const h = maxAspectBox.box.ymax - maxAspectBox.box.ymin;
+      const aspect = w / h;
+      
+      if (aspect >= 4.0 && h <= 0.25 * w) {
+        console.log("Belt geometry detected: aspect =", aspect, ", h/w =", h/w);
+        category = "accessory";
+        subcategory = "belt";
+        bbox = [maxAspectBox.box.xmin, maxAspectBox.box.ymin, maxAspectBox.box.xmax, maxAspectBox.box.ymax];
+        trace.push({ step: "LABEL", source: "heuristic", base: { label: maxAspectBox.label, score: maxAspectBox.score }, final: "accessory/belt" });
+        
+        // Extract color
+        try {
+          const colorData = await extractDominantColor(base64Image);
+          colorHex = colorData.hex;
+          colorName = colorData.name;
+          console.log("Color extracted:", colorName, colorHex);
+        } catch (colorError) {
+          console.warn("Color extraction failed:", colorError.message);
+          trace.push({ step: "COLOR", status: 0, error: colorError.message });
+        }
+      } else {
+        console.log("No confident YOLOS detection found");
+        trace.push({ step: "FASHION_SEG", status: 204, error: "no-confident-detections" });
       }
     } else if (fUrl) {
       console.log("No YOLOS detections found");
