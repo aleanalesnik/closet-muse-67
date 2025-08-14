@@ -1,8 +1,10 @@
 import { supabase } from "@/lib/supabase";
 
 export async function uploadAndProcessItem(file: File, title?: string) {
+  console.log("uploadAndProcessItem called with:", { fileName: file.name, title });
   // 1) current user
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
+  console.log("Auth check:", { user: user?.id, error: userErr });
   if (userErr || !user) throw new Error("Not signed in");
 
   // 2) make a storage path (keep bucket private)
@@ -11,10 +13,12 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   const imagePath = `${user.id}/items/${objectId}.${ext}`;
 
   // 3) upload to storage
+  console.log("Uploading to storage:", imagePath);
   const { error: upErr } = await supabase.storage.from("sila").upload(imagePath, file, {
     contentType: file.type || `image/${ext}`,
     upsert: true
   });
+  console.log("Storage upload result:", { error: upErr });
   if (upErr) throw upErr;
 
   // 4) create DB row (so we have an item id & owner)

@@ -70,7 +70,9 @@ export default function Closet({ user }: ClosetProps) {
 
     setUploading(true);
     try {
+      console.log("Starting upload for file:", file.name);
       const { itemId, fn } = await uploadAndProcessItem(file, file.name.split('.')[0]);
+      console.log("Upload completed:", { itemId, fn });
       
       toast({
         title: fn?.ok !== false ? "Processing started" : "Uploaded",
@@ -81,6 +83,7 @@ export default function Closet({ user }: ClosetProps) {
       await loadItems();
       
     } catch (err: any) {
+      console.error("Upload failed:", err);
       toast({ 
         title: "Upload failed", 
         description: err?.message ?? String(err), 
