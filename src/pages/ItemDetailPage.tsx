@@ -170,7 +170,7 @@ export default function ItemDetailPage() {
 
           <div className="space-y-1">
             <label className="text-sm text-muted-foreground">Category</label>
-            <Select value={category ?? undefined} onValueChange={(v)=>{ setCategory(v); setSubcategory(null); }}>
+            <Select value={category || ""} onValueChange={(v)=>{ setCategory(v || null); setSubcategory(null); }}>
               <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
               <SelectContent>
                 {CATEGORY_OPTIONS.map(c => <SelectItem key={c} value={c}>{c[0].toUpperCase()+c.slice(1)}</SelectItem>)}
@@ -180,7 +180,7 @@ export default function ItemDetailPage() {
 
           <div className="space-y-1">
             <label className="text-sm text-muted-foreground">Sub-Category</label>
-            <Select value={subcategory ?? undefined} onValueChange={setSubcategory} disabled={!category}>
+            <Select value={subcategory || ""} onValueChange={(v) => setSubcategory(v || null)} disabled={!category}>
               <SelectTrigger><SelectValue placeholder={category ? "Select sub-category" : "Pick a category first"} /></SelectTrigger>
               <SelectContent>
                 {subcatOptions.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}

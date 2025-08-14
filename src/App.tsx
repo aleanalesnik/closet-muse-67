@@ -15,17 +15,21 @@ const queryClient = new QueryClient();
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Index />} />
-        <Route path="/inspo-test" element={<InspoTest />} />
-        <Route path="/inspiration" element={<Inspiration />} />
-        <Route path="/item/:id" element={<ItemDetailPage />} />
-        <Route path="/sign-in-magic" element={<MagicLinkSignIn />} />
-        <Route path="/auth/callback" element={<AuthCallback />} />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <Toaster />
+      <Sonner />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/inspo-test" element={<InspoTest />} />
+          <Route path="/inspiration" element={<Inspiration />} />
+          <Route path="/item/:id" element={<ItemDetailPage />} />
+          <Route path="/sign-in-magic" element={<MagicLinkSignIn />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }
 
