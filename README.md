@@ -71,3 +71,118 @@ Yes, you can!
 To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+
+## Testing Checklist
+
+### Test 1: Probe Test
+- [ ] Call the `inference-probe` edge function
+- [ ] Verify response contains available endpoints
+- [ ] **SQL Verification**: No DB changes expected for probe test
+
+### Test 2: Items-process Test  
+- [ ] Upload an item through the API (not UI)
+- [ ] Call `items-process` edge function with itemId and imagePath
+- [ ] Verify processing completes successfully
+- [ ] **SQL Verification**:
+```sql
+-- Check item was processed
+SELECT id, title, category, subcategory, color_hex, color_name, attributes, bbox 
+FROM items 
+WHERE id = 'YOUR_ITEM_ID';
+
+-- Check embedding was created
+SELECT item_id, embedding IS NOT NULL as has_embedding 
+FROM item_embeddings 
+WHERE item_id = 'YOUR_ITEM_ID';
+```
+
+### Test 3: UI Upload Test
+- [ ] Upload image through Closet UI
+- [ ] Verify toast shows "Processing started"
+- [ ] Wait for processing to complete
+- [ ] Verify item appears in closet with detected attributes
+- [ ] **SQL Verification**:
+```sql
+-- Check latest uploaded items
+SELECT id, title, category, subcategory, color_hex, color_name, created_at, attributes, bbox
+FROM items 
+ORDER BY created_at DESC 
+LIMIT 5;
+
+-- Verify embeddings exist
+SELECT i.title, ie.embedding IS NOT NULL as has_embedding
+FROM items i
+LEFT JOIN item_embeddings ie ON i.id = ie.item_id
+ORDER BY i.created_at DESC 
+LIMIT 5;
+```
+
+### Test 4: Inspiration Test
+- [ ] Upload inspiration photo through Inspiration UI  
+- [ ] Verify query is created and processing starts
+- [ ] Wait for detections to appear
+- [ ] Verify matched items from closet are shown
+- [ ] **SQL Verification**:
+```sql
+-- Check inspiration queries
+SELECT id, status, error, created_at, image_path
+FROM inspiration_queries 
+ORDER BY created_at DESC 
+LIMIT 3;
+
+-- Check detections for latest query
+SELECT id, category, subcategory, confidence, color_hex, color_name, bbox
+FROM inspiration_detections 
+WHERE query_id = 'YOUR_QUERY_ID'
+ORDER BY confidence DESC;
+
+-- Verify detection embeddings
+SELECT id, embedding IS NOT NULL as has_embedding, confidence
+FROM inspiration_detections 
+WHERE query_id = 'YOUR_QUERY_ID'
+ORDER BY confidence DESC;
+```
+
+### Test 5: Failure Modes Test
+- [ ] Upload invalid image format
+- [ ] Upload extremely large image  
+- [ ] Test with network interruption
+- [ ] Verify error handling and user feedback
+- [ ] **SQL Verification**:
+```sql
+-- Check for failed queries
+SELECT id, status, error, created_at
+FROM inspiration_queries 
+WHERE status = 'error' OR error IS NOT NULL
+ORDER BY created_at DESC;
+
+-- Check for incomplete items
+SELECT id, title, category, subcategory, attributes, created_at
+FROM items 
+WHERE category IS NULL OR attributes IS NULL
+ORDER BY created_at DESC 
+LIMIT 10;
+```
+
+### Quick Status Check Queries
+```sql
+-- Overall system health
+SELECT 
+  (SELECT COUNT(*) FROM items) as total_items,
+  (SELECT COUNT(*) FROM item_embeddings) as total_embeddings,
+  (SELECT COUNT(*) FROM inspiration_queries) as total_queries,
+  (SELECT COUNT(*) FROM inspiration_detections) as total_detections,
+  (SELECT COUNT(*) FROM inspiration_queries WHERE status = 'error') as failed_queries;
+
+-- Recent activity
+SELECT 'items' as table_name, COUNT(*) as recent_count 
+FROM items WHERE created_at > NOW() - INTERVAL '1 hour'
+UNION ALL
+SELECT 'inspiration_queries', COUNT(*) 
+FROM inspiration_queries WHERE created_at > NOW() - INTERVAL '1 hour'
+UNION ALL  
+SELECT 'inspiration_detections', COUNT(*)
+FROM inspiration_detections WHERE query_id IN (
+  SELECT id FROM inspiration_queries WHERE created_at > NOW() - INTERVAL '1 hour'
+);
+```
