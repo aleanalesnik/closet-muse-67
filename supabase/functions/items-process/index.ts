@@ -1,200 +1,129 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+function getServiceClient() {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key =
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
+    Deno.env.get("SUPABASE_SERVICE_ROLE");
+  if (!url || !key) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  return createClient(url, key);
+}
+
+function buildInferenceHeaders() {
+  const token = Deno.env.get("INFERENCE_API_TOKEN");
+  const headerName = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
+  const prefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
+  if (!token) throw new Error("Missing INFERENCE_API_TOKEN");
+  return { [headerName]: prefix ? `${prefix} ${token}` : token, "Content-Type": "application/json" };
+}
+
+function uint8ToBase64(u8: Uint8Array) {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < u8.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK) as unknown as number[]);
+  }
+  // deno-lint-ignore no-deprecated-deno-api
+  return btoa(binary);
+}
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: cors });
 
   try {
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
-
     const { itemId, imagePath } = await req.json();
-
-    console.log(`Processing item ${itemId} with image ${imagePath}`);
-
-    // 1. Download image from storage
-    const { data: imageData, error: downloadError } = await supabase.storage
-      .from('sila')
-      .download(imagePath);
-
-    if (downloadError) {
-      console.error('Failed to download image:', downloadError);
-      throw new Error(`Failed to download image: ${downloadError.message}`);
+    if (!itemId || !imagePath) {
+      return new Response(JSON.stringify({ ok: false, error: "itemId and imagePath required" }), {
+        status: 400, headers: { ...cors, "Content-Type": "application/json" },
+      });
     }
 
-    const imageBuffer = await imageData.arrayBuffer();
-    const base64Image = btoa(String.fromCharCode(...new Uint8Array(imageBuffer)));
+    const supabase = getServiceClient();
+    const baseUrl = Deno.env.get("INFERENCE_BASE_URL");
+    const DETECT = Deno.env.get("DETECT_ENDPOINT");
+    const SEGMENT = Deno.env.get("SEGMENT_ENDPOINT");
+    const EMBED = Deno.env.get("EMBED_ENDPOINT");
+    if (!baseUrl || !DETECT || !SEGMENT || !EMBED) {
+      throw new Error("Missing one or more inference endpoints/base URL");
+    }
+    const infHeaders = buildInferenceHeaders();
 
-    // 2. Call ML inference endpoints
-    const inferenceBaseUrl = Deno.env.get('INFERENCE_BASE_URL')!;
-    const apiToken = Deno.env.get('INFERENCE_API_TOKEN')!;
-    const authHeader = Deno.env.get('INFERENCE_AUTH_HEADER') || 'Authorization';
-    const authPrefix = Deno.env.get('INFERENCE_AUTH_PREFIX') || 'Bearer';
-    const authValue = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+    // download image
+    const { data: img, error: dlErr } = await supabase.storage.from("sila").download(imagePath);
+    if (dlErr) throw new Error(`Failed to download image: ${dlErr.message}`);
+    const buf = new Uint8Array(await img.arrayBuffer());
+    const base64Image = uint8ToBase64(buf);
 
-    // DETECT - get bounding boxes
-    const detectResponse = await fetch(`${inferenceBaseUrl}${Deno.env.get('DETECT_ENDPOINT')}`, {
-      method: 'POST',
-      headers: {
-        [authHeader]: authValue,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        image: base64Image,
-        format: 'base64'
-      }),
+    // DETECT
+    const detectRes = await fetch(`${baseUrl}${DETECT}`, {
+      method: "POST", headers: infHeaders, body: JSON.stringify({ image: base64Image, format: "base64" }),
     });
-
-    if (!detectResponse.ok) {
-      const errorText = await detectResponse.text().catch(() => 'Unknown error');
-      console.error(`Inference error: ${detectResponse.status} - ${errorText.slice(0, 200)}`);
-      throw new Error(`Detection failed: ${detectResponse.status}`);
+    if (!detectRes.ok) {
+      const t = await detectRes.text().catch(() => "");
+      throw new Error(`Detection failed: ${detectRes.status}${t ? ` – ${t.slice(0, 200)}` : ""}`);
     }
-
-    const detectData = await detectResponse.json();
-    const boxes = detectData.boxes || [];
-
-    if (boxes.length === 0) {
-      throw new Error('No objects detected in image');
-    }
-
-    // Use the first detected box
+    const detectData = await detectRes.json();
+    const boxes = Array.isArray(detectData?.boxes) ? detectData.boxes : [];
+    if (boxes.length === 0) throw new Error("No objects detected in image");
     const bbox = boxes[0];
 
-    // SEGMENT - get mask
-    const segmentResponse = await fetch(`${inferenceBaseUrl}${Deno.env.get('SEGMENT_ENDPOINT')}`, {
-      method: 'POST',
-      headers: {
-        [authHeader]: authValue,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        image: base64Image,
-        bbox: bbox,
-        format: 'base64'
-      }),
+    // SEGMENT
+    const segmentRes = await fetch(`${baseUrl}${SEGMENT}`, {
+      method: "POST", headers: infHeaders, body: JSON.stringify({ image: base64Image, bbox, format: "base64" }),
     });
+    if (!segmentRes.ok) throw new Error(`Segmentation failed: ${segmentRes.status}`);
+    const segmentData = await segmentRes.json();
+    const maskBase64 = segmentData?.mask;
+    const cropBase64 = segmentData?.crop;
+    if (!maskBase64 || !cropBase64) throw new Error("Segmentation returned no mask/crop");
 
-    if (!segmentResponse.ok) {
-      throw new Error(`Segmentation failed: ${segmentResponse.status}`);
-    }
+    // naive color placeholder
+    const color_hex = "#8B5A2B";
+    const color_name = "brown";
 
-    const segmentData = await segmentResponse.json();
-    const maskBase64 = segmentData.mask;
-    const cropBase64 = segmentData.crop;
-
-    // Compute dominant color (simplified - using center pixel of crop)
-    const colorHex = '#8B5A2B'; // Placeholder - would extract from crop
-    const colorName = 'brown';
-
-    // Upload mask and crop to storage
-    const userId = imagePath.split('/')[0];
-    const itemUuid = imagePath.split('/')[2].split('.')[0];
-    
+    // store mask/crop
+    const parts = imagePath.split("/");
+    const userId = parts[0];
+    const itemUuid = parts[2]?.split(".")[0];
     const maskPath = `${userId}/items/${itemUuid}-mask.png`;
     const cropPath = `${userId}/items/${itemUuid}-crop.png`;
 
-    // Upload mask
-    const maskBuffer = Uint8Array.from(atob(maskBase64), c => c.charCodeAt(0));
-    await supabase.storage.from('sila').upload(maskPath, maskBuffer, {
-      contentType: 'image/png',
-      upsert: true
+    const toBytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    await supabase.storage.from("sila").upload(maskPath, toBytes(maskBase64), { contentType: "image/png", upsert: true });
+    await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64), { contentType: "image/png", upsert: true });
+
+    // EMBED
+    const embedRes = await fetch(`${baseUrl}${EMBED}`, {
+      method: "POST", headers: infHeaders, body: JSON.stringify({ image: cropBase64, format: "base64" }),
     });
+    if (!embedRes.ok) throw new Error(`Embedding failed: ${embedRes.status}`);
+    const embedData = await embedRes.json();
+    const embedding = embedData?.embedding;
+    if (!embedding) throw new Error("Embedding missing from response");
 
-    // Upload crop
-    const cropBuffer = Uint8Array.from(atob(cropBase64), c => c.charCodeAt(0));
-    await supabase.storage.from('sila').upload(cropPath, cropBuffer, {
-      contentType: 'image/png',
-      upsert: true
+    const { error: upsertErr } = await supabase.from("item_embeddings").upsert({ item_id: itemId, embedding });
+    if (upsertErr) throw upsertErr;
+
+    const category = detectData.category || "clothing";
+    const subcategory = detectData.subcategory || "item";
+    const { error: updErr } = await supabase.from("items").update({
+      category, subcategory, color_hex, color_name, mask_path: maskPath, crop_path: cropPath,
+    }).eq("id", itemId);
+    if (updErr) throw updErr;
+
+    return new Response(JSON.stringify({ ok: true, embedding: Array.isArray(embedding) ? embedding.length : 0 }), {
+      headers: { ...cors, "Content-Type": "application/json" },
     });
-
-    // 3. EMBED - get embedding vector
-    const embedResponse = await fetch(`${inferenceBaseUrl}${Deno.env.get('EMBED_ENDPOINT')}`, {
-      method: 'POST',
-      headers: {
-        [authHeader]: authValue,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        image: cropBase64,
-        format: 'base64'
-      }),
+  } catch (e) {
+    console.error("items-process error:", e);
+    return new Response(JSON.stringify({ ok: false, error: String(e?.message ?? e) }), {
+      status: 500, headers: { ...cors, "Content-Type": "application/json" },
     });
-
-    if (!embedResponse.ok) {
-      throw new Error(`Embedding failed: ${embedResponse.status}`);
-    }
-
-    const embedData = await embedResponse.json();
-    const embedding = embedData.embedding;
-
-    // 4. Upsert item_embeddings
-    const { error: embeddingError } = await supabase
-      .from('item_embeddings')
-      .upsert({
-        item_id: itemId,
-        embedding: embedding
-      });
-
-    if (embeddingError) {
-      console.error('Failed to upsert embedding:', embeddingError);
-      throw new Error(`Failed to save embedding: ${embeddingError.message}`);
-    }
-
-    // 5. Update items table
-    const category = detectData.category || 'clothing';
-    const subcategory = detectData.subcategory || 'item';
-
-    const { error: updateError } = await supabase
-      .from('items')
-      .update({
-        category,
-        subcategory,
-        color_hex: colorHex,
-        color_name: colorName,
-        mask_path: maskPath,
-      })
-      .eq('id', itemId);
-
-    if (updateError) {
-      console.error('Failed to update item:', updateError);
-      throw new Error(`Failed to update item: ${updateError.message}`);
-    }
-
-    console.log(`Successfully processed item ${itemId}`);
-
-    return new Response(
-      JSON.stringify({ ok: true, embedding: embedding.length }),
-      { 
-        headers: { 
-          ...corsHeaders,
-          'Content-Type': 'application/json' 
-        } 
-      }
-    );
-
-  } catch (error) {
-    console.error('Error in items-process:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: error.message,
-        ok: false 
-      }),
-      { 
-        status: 500,
-        headers: { 
-          ...corsHeaders,
-          'Content-Type': 'application/json' 
-        } 
-      }
-    );
   }
 });
