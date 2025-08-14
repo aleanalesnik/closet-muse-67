@@ -27,6 +27,42 @@ function uint8ToBase64(u8: Uint8Array) {
   return btoa(binary);
 }
 
+async function callInferenceWithRetry(url: string, body: object, stage: string, headers: Record<string, string>) {
+  const maxRetries = 2;
+  const delays = [250, 750]; // ms
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body)
+    });
+    
+    const responseText = await response.text();
+    const urlWithoutToken = url.replace(/[\?&].*$/, ''); // Remove query params that might contain tokens
+    
+    console.log(`[${stage}] ${response.status} ${urlWithoutToken} - ${responseText.slice(0, 120)}`);
+    
+    if (response.status === 404) {
+      throw new Error(`${stage} not deployed (404) at ${urlWithoutToken}`);
+    }
+    
+    if (response.ok) {
+      return JSON.parse(responseText);
+    }
+    
+    // 5xx errors: retry with backoff
+    if (response.status >= 500 && attempt < maxRetries) {
+      console.log(`[${stage}] Retrying in ${delays[attempt]}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+      continue;
+    }
+    
+    // Final failure
+    throw new Error(`${stage} failed: ${response.status} - ${responseText.slice(0, 200)}`);
+  }
+}
+
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -46,48 +82,49 @@ Deno.serve(async (req) => {
 
     const supabase = getServiceClient();
     const DETECT_URL = Deno.env.get("DETECT_URL");
+    const SEGMENT_URL = Deno.env.get("SEGMENT_URL");
     const EMBED_URL = Deno.env.get("EMBED_URL");
-    const SEGMENT_URL = Deno.env.get("SEGMENT_URL") || DETECT_URL; // fallback to DETECT for segmentation
     
-    if (!DETECT_URL || !EMBED_URL) {
-      throw new Error("Missing DETECT_URL or EMBED_URL");
+    if (!DETECT_URL || !SEGMENT_URL || !EMBED_URL) {
+      throw new Error("Missing DETECT_URL, SEGMENT_URL, or EMBED_URL");
     }
     const infHeaders = buildInferenceHeaders();
 
-    // download image
+    // Download image
     const { data: img, error: dlErr } = await supabase.storage.from("sila").download(imagePath);
     if (dlErr) throw new Error(`Failed to download image: ${dlErr.message}`);
     const buf = new Uint8Array(await img.arrayBuffer());
     const base64Image = uint8ToBase64(buf);
 
-    // DETECT
-    const detectRes = await fetch(DETECT_URL, {
-      method: "POST", headers: infHeaders, body: JSON.stringify({ image: base64Image, format: "base64" }),
-    });
-    if (!detectRes.ok) {
-      const t = await detectRes.text().catch(() => "");
-      throw new Error(`Detection failed: ${detectRes.status}${t ? ` – ${t.slice(0, 200)}` : ""}`);
-    }
-    const detectData = await detectRes.json();
+    // STEP 1: DETECT
+    console.log(`[DETECT] Starting detection...`);
+    const detectData = await callInferenceWithRetry(
+      DETECT_URL, 
+      { image: base64Image, format: "base64" }, 
+      "DETECT", 
+      infHeaders
+    );
+    
     const boxes = Array.isArray(detectData?.boxes) ? detectData.boxes : [];
     if (boxes.length === 0) throw new Error("No objects detected in image");
     const bbox = boxes[0];
+    const category = detectData.category || "clothing";
+    const subcategory = detectData.subcategory || "item";
 
-    // SEGMENT (using DETECT_URL as fallback since segmentation might not be separate)
-    const segmentRes = await fetch(SEGMENT_URL, {
-      method: "POST", headers: infHeaders, body: JSON.stringify({ image: base64Image, bbox, format: "base64" }),
-    });
-    if (!segmentRes.ok) throw new Error(`Segmentation failed: ${segmentRes.status}`);
-    const segmentData = await segmentRes.json();
+    // STEP 2: SEGMENT
+    console.log(`[SEGMENT] Starting segmentation...`);
+    const segmentData = await callInferenceWithRetry(
+      SEGMENT_URL, 
+      { image: base64Image, bbox, format: "base64" }, 
+      "SEGMENT", 
+      infHeaders
+    );
+    
     const maskBase64 = segmentData?.mask;
     const cropBase64 = segmentData?.crop;
     if (!maskBase64 || !cropBase64) throw new Error("Segmentation returned no mask/crop");
 
-    // naive color placeholder
-    const color_hex = "#8B5A2B";
-    const color_name = "brown";
-
-    // store mask/crop
+    // Store mask/crop
     const parts = imagePath.split("/");
     const userId = parts[0];
     const itemUuid = parts[2]?.split(".")[0];
@@ -98,64 +135,34 @@ Deno.serve(async (req) => {
     await supabase.storage.from("sila").upload(maskPath, toBytes(maskBase64), { contentType: "image/png", upsert: true });
     await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64), { contentType: "image/png", upsert: true });
 
-    // EMBED with robust fallback
-    let embedding;
-    let embedUrl = EMBED_URL;
+    // STEP 3: EMBED
+    console.log(`[EMBED] Starting embedding...`);
+    const embedData = await callInferenceWithRetry(
+      EMBED_URL, 
+      { image: cropBase64, format: "base64" }, 
+      "EMBED", 
+      infHeaders
+    );
     
-    // Try multiple approaches for embedding
-    const embedAttempts = [
-      // Attempt 1: JSON with inputs key
-      { url: embedUrl, body: JSON.stringify({ inputs: cropBase64 }) },
-      // Attempt 2: Original format
-      { url: embedUrl, body: JSON.stringify({ image: cropBase64, format: "base64" }) },
-      // Attempt 3: Try feature-extraction task if image-feature-extraction fails
-      { url: embedUrl.replace("image-feature-extraction", "feature-extraction"), body: JSON.stringify({ inputs: cropBase64 }) },
-      // Attempt 4: Fallback to different model
-      { url: "https://router.huggingface.co/hf-inference/models/laion/CLIP-ViT-B-32-laion2B-s34B-b79K?task=feature-extraction", body: JSON.stringify({ inputs: cropBase64 }) },
-    ];
-
-    let embedSuccess = false;
-    for (let i = 0; i < embedAttempts.length && !embedSuccess; i++) {
-      const attempt = embedAttempts[i];
-      console.log(`EMBED attempt ${i + 1}: ${attempt.url.split('?')[0]}?task=${attempt.url.split('task=')[1] || 'unknown'}`);
-      
-      try {
-        const embedRes = await fetch(attempt.url, {
-          method: "POST", headers: infHeaders, body: attempt.body,
-        });
-        
-        console.log(`EMBED attempt ${i + 1} status: ${embedRes.status}`);
-        
-        if (embedRes.ok) {
-          const embedData = await embedRes.json();
-          embedding = embedData?.embedding || embedData;
-          if (embedding && Array.isArray(embedding)) {
-            embedSuccess = true;
-            console.log(`EMBED success with ${embedding.length} dimensions`);
-          }
-        } else if (i === embedAttempts.length - 1) {
-          const errorText = await embedRes.text().catch(() => "");
-          throw new Error(`All embedding attempts failed. Last: ${embedRes.status}${errorText ? ` - ${errorText.slice(0, 100)}` : ""}`);
-        }
-      } catch (e) {
-        if (i === embedAttempts.length - 1) throw e;
-        console.log(`EMBED attempt ${i + 1} failed: ${e.message}`);
-      }
+    const embedding = embedData?.embedding;
+    if (!embedding || !Array.isArray(embedding)) {
+      throw new Error("Embedding returned no valid embedding array");
     }
-    
-    if (!embedding || !Array.isArray(embedding)) throw new Error("No valid embedding returned from any attempt");
 
+    // Store results
     const { error: upsertErr } = await supabase.from("item_embeddings").upsert({ item_id: itemId, embedding });
     if (upsertErr) throw upsertErr;
 
-    const category = detectData.category || "clothing";
-    const subcategory = detectData.subcategory || "item";
+    const color_hex = "#8B5A2B"; // placeholder
+    const color_name = "brown"; // placeholder
+    
     const { error: updErr } = await supabase.from("items").update({
       category, subcategory, color_hex, color_name, mask_path: maskPath, crop_path: cropPath,
     }).eq("id", itemId);
     if (updErr) throw updErr;
 
-    return new Response(JSON.stringify({ ok: true, embedding: Array.isArray(embedding) ? embedding.length : 0 }), {
+    console.log(`[SUCCESS] Pipeline completed - embedding dims: ${embedding.length}`);
+    return new Response(JSON.stringify({ ok: true, embedding_dims: embedding.length }), {
       headers: { ...cors, "Content-Type": "application/json" },
     });
   } catch (e) {
