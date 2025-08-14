@@ -1,0 +1,1 @@
+UPDATE public.items SET category = NULL, subcategory = NULL WHERE id = '0b757a39-a864-4894-acd9-9e1d9759b645';

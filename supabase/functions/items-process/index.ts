@@ -153,6 +153,66 @@ function mapFashionLabel(label: string): { category: string; subcategory: string
   return { category: "clothing", subcategory: "item" };
 }
 
+// YOLOS helper functions
+async function callYolos(base64: string, threshold: number) {
+  const url = Deno.env.get("FASHION_SEG_URL")!;
+  const token = Deno.env.get("FASHION_API_TOKEN")!;
+
+  const body1 = { inputs: base64, parameters: { threshold } };           // raw base64
+  const r1 = await fetch(url, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body1),
+  });
+  if (r1.ok) return { res: await r1.json(), mode: "raw" };
+
+  // some endpoints prefer data URLs; try once more if 4xx/415
+  if (r1.status >= 400) {
+    const body2 = { inputs: `data:image/png;base64,${base64}`, parameters: { threshold } };
+    const r2 = await fetch(url, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body2),
+    });
+    return { res: r2.ok ? await r2.json() : null, mode: "dataurl", status: r2.status };
+  }
+  return { res: null, mode: "raw", status: r1.status };
+}
+
+function parseYolos(out: any) {
+  if (!Array.isArray(out)) return [];
+  return out.map((o: any) => ({
+    label: o.label ?? o.class ?? o.category ?? null,
+    score: Number(o.score ?? o.confidence ?? o.prob ?? 0),
+    // the model returns {xmin,ymin,xmax,ymax}
+    box: o.box ?? o.bbox ?? o.bounding_box ?? null,
+  })).filter((p: any) => p.box && p.label !== null);
+}
+
+function chooseAndMap(preds: any[], imgW: number, imgH: number, title: string, imagePath: string) {
+  if (!preds.length) return null;
+
+  // pick the highest-score candidate
+  let best = preds.sort((a,b)=>b.score-a.score)[0];
+  const w = best.box.xmax - best.box.xmin;
+  const h = best.box.ymax - best.box.ymin;
+  const ar = w / Math.max(1, h);
+  const relH = h / Math.max(1, imgH);
+  const relW = w / Math.max(1, imgW);
+
+  const looksLikeBelt = (ar >= 4.0 && h <= 0.25 * w) || (ar >= 6.0);
+  const label = (best.label || "").toLowerCase();
+  const hint = (title + " " + imagePath).toLowerCase();
+
+  if (looksLikeBelt || /\bbelt\b/.test(hint) || ["belt","buckle","waistband"].includes(label)) {
+    return { category: "accessory", subcategory: "belt", source: "heuristic", base: { label: best.label, score: best.score, box: best.box } };
+  }
+
+  // else: normal mapping from YOLOS → our taxonomy (existing function)
+  const mapped = mapFashionLabel(best.label);
+  return { ...mapped, source: "yolos", base: { label: best.label, score: best.score, box: best.box } };
+}
+
 // Pick main detection (highest score, then largest area)
 function pickMainDetection(preds: YolosPred[]): YolosPred | null {
   return preds
@@ -213,6 +273,12 @@ async function tryCaption(base64Image: string): Promise<{ caption: string; url: 
         return { caption, url, trace };
       }
 
+      // Skip 404 endpoints - they're not hosted
+      if (response.status === 404) {
+        trace.push({ step: "CAPTION", url, status: 404, ms: Date.now() - startTime, mode, skipped: "not_hosted" });
+        continue;
+      }
+
       // If 415, try raw bytes
       if (response.status === 415) {
         mode = "bytes";
@@ -241,7 +307,8 @@ async function tryCaption(base64Image: string): Promise<{ caption: string; url: 
     }
   }
 
-  // All failed
+  // All failed or skipped - return fallback
+  trace.push({ step: "CAPTION", status: "all_failed", error: "No caption endpoints available" });
   return { caption: "clothing item", url: "fallback", trace };
 }
 
@@ -317,84 +384,55 @@ Deno.serve(async (req) => {
       "Content-Type": "application/json" 
     } : {};
 
-    let preds: YolosPred[] = [];
+    let preds: any[] = [];
     if (fUrl) {
       console.log("Step 1: YOLOS detection...");
-      const startTime = Date.now();
+      const t1Start = Date.now();
       
       try {
-        // First attempt with threshold 0.12
-        let res = await fetch(fUrl, { 
-          method: "POST", 
-          headers: fHeaders, 
-          body: JSON.stringify({ inputs: base64Image, parameters: { threshold: 0.12 } }) 
-        });
+        // FIRST PASS: high threshold (matches playground)
+        const pass1 = await callYolos(base64Image, 0.12);
+        preds = parseYolos(pass1.res);
+        const t1 = Date.now() - t1Start;
+        trace.push({ step: "FASHION_SEG", status: pass1.status ?? 200, ms: t1, count: preds.length, mode: pass1.mode, threshold: 0.12 });
         
-        // Fallback to data URL format if needed
-        if (res.status === 415 || res.status === 400) {
-          console.log("Retrying with data URL format...");
-          res = await fetch(fUrl, { 
-            method: "POST", 
-            headers: fHeaders, 
-            body: JSON.stringify({ inputs: `data:image/png;base64,${base64Image}`, parameters: { threshold: 0.12 } }) 
+        console.log("YOLOS pass 1 (threshold 0.12) successful, predictions:", preds.length);
+        
+        // SECOND PASS: only if pass1 returned no boxes
+        if (preds.length === 0) {
+          console.log("No detections at threshold 0.12, trying 0.06...");
+          const t2Start = Date.now();
+          const pass2 = await callYolos(base64Image, 0.06);
+          const p2 = parseYolos(pass2.res);
+          const t2 = Date.now() - t2Start;
+          trace.push({ step: "FASHION_SEG", status: pass2.status ?? 200, ms: t2, count: p2.length, mode: pass2.mode, threshold: 0.06 });
+          if (p2.length > 0) preds = p2;
+        }
+        
+        // Log raw predictions for debugging (dev only) with box dimensions
+        if (debug && preds.length > 0) {
+          const top5 = preds
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 5)
+            .map(p => ({ 
+              label: p.label, 
+              score: Math.round(p.score * 1000) / 1000,
+              w: Math.round((p.box.xmax - p.box.xmin) * 1000) / 1000,
+              h: Math.round((p.box.ymax - p.box.ymin) * 1000) / 1000
+            }));
+          trace.push({ step: "FASHION_SEG_RAW", top: top5 });
+        }
+        
+        // If still no detections, show payload debug info
+        if (debug && preds.length === 0) {
+          trace.push({
+            step: "FASHION_SEG_PAYLOAD",
+            shape: { hasInputs: true, hasImage: false, threshold: 0.12 }
           });
         }
         
-        const status = res.status;
-        const ms = Date.now() - startTime;
-        
-        if (res.ok) {
-          preds = await res.json().catch(() => []);
-          console.log("YOLOS detection (threshold 0.12) successful, predictions:", preds.length);
-          
-          // If no detections, try with lower threshold
-          if (Array.isArray(preds) && preds.length === 0) {
-            console.log("No detections at threshold 0.12, trying 0.06...");
-            const secondStartTime = Date.now();
-            
-            let res2 = await fetch(fUrl, { 
-              method: "POST", 
-              headers: fHeaders, 
-              body: JSON.stringify({ inputs: base64Image, parameters: { threshold: 0.06 } }) 
-            });
-            
-            if (res2.status === 415 || res2.status === 400) {
-              res2 = await fetch(fUrl, { 
-                method: "POST", 
-                headers: fHeaders, 
-                body: JSON.stringify({ inputs: `data:image/png;base64,${base64Image}`, parameters: { threshold: 0.06 } }) 
-              });
-            }
-            
-            if (res2.ok) {
-              preds = await res2.json().catch(() => []);
-              console.log("YOLOS detection (threshold 0.06) successful, predictions:", preds.length);
-              const secondMs = Date.now() - secondStartTime;
-              trace.push({ step: "FASHION_SEG_RETRY", status: res2.status, ms: secondMs, threshold: 0.06, count: Array.isArray(preds) ? preds.length : 0 });
-            }
-          }
-          
-          trace.push({ step: "FASHION_SEG", status, ms, count: Array.isArray(preds) ? preds.length : 0 });
-          
-          // Log raw predictions for debugging (dev only) with box dimensions
-          if (debug && Array.isArray(preds)) {
-            const top5 = preds
-              .sort((a, b) => b.score - a.score)
-              .slice(0, 5)
-              .map(p => ({ 
-                label: p.label, 
-                score: Math.round(p.score * 1000) / 1000,
-                w: Math.round((p.box.xmax - p.box.xmin) * 1000) / 1000,
-                h: Math.round((p.box.ymax - p.box.ymin) * 1000) / 1000
-              }));
-            trace.push({ step: "FASHION_SEG_RAW", top: top5 });
-          }
-        } else {
-          console.log("YOLOS detection failed:", status);
-          trace.push({ step: "FASHION_SEG", status, ms, error: `HTTP ${status}` });
-        }
       } catch (error) {
-        const ms = Date.now() - startTime;
+        const ms = Date.now() - t1Start;
         console.error("YOLOS detection error:", error);
         trace.push({ step: "FASHION_SEG", status: 0, ms, error: error.message });
       }
@@ -403,53 +441,35 @@ Deno.serve(async (req) => {
       trace.push({ step: "FASHION_SEG", status: "not_configured" });
     }
 
-    // Step 2: Map YOLOS label to our taxonomy  
-    const mainDetection = Array.isArray(preds) ? pickMainDetection(preds) : null;
-    if (mainDetection) {
-      console.log("Step 2: Mapping YOLOS label:", mainDetection.label, "score:", mainDetection.score);
-      const { category: detectedCategory, subcategory: detectedSubcategory } = mapFashionLabel(mainDetection.label);
-      category = detectedCategory;
-      subcategory = detectedSubcategory;
-      bbox = [mainDetection.box.xmin, mainDetection.box.ymin, mainDetection.box.xmax, mainDetection.box.ymax];
+    // Step 2: Map YOLOS detections with geometry heuristics
+    let mapped = null;
+    if (preds.length > 0) {
+      console.log("Step 2: Processing YOLOS detections...");
       
-      trace.push({ step: "LABEL", source: "yolos", base: { label: mainDetection.label, score: mainDetection.score }, final: `${category}/${subcategory}` });
+      // Get item title for heuristics
+      const { data: itemData } = await supabase
+        .from('items')
+        .select('title')
+        .eq('id', itemId)
+        .single();
       
-      // Step 3: Compute color from full image
-      console.log("Step 3: Computing color...");
-      try {
-        const colorData = await extractDominantColor(base64Image);
-        colorHex = colorData.hex;
-        colorName = colorData.name;
-        console.log("Color extracted:", colorName, colorHex);
-      } catch (colorError) {
-        console.warn("Color extraction failed:", colorError.message);
-        trace.push({ step: "COLOR", status: 0, error: colorError.message });
-      }
-    } else if (Array.isArray(preds) && preds.length > 0) {
-      // Belt geometry heuristic: find max aspect ratio box
-      console.log("Step 2b: Checking belt geometry heuristic...");
-      const maxAspectBox = preds.reduce((max, pred) => {
-        const w = pred.box.xmax - pred.box.xmin;
-        const h = pred.box.ymax - pred.box.ymin;
-        const aspect = w / h;
-        const maxW = max.box.xmax - max.box.xmin;
-        const maxH = max.box.ymax - max.box.ymin;
-        const maxAspect = maxW / maxH;
-        return aspect > maxAspect ? pred : max;
-      }, preds[0]);
+      const title = itemData?.title || '';
       
-      const w = maxAspectBox.box.xmax - maxAspectBox.box.xmin;
-      const h = maxAspectBox.box.ymax - maxAspectBox.box.ymin;
-      const aspect = w / h;
+      // Use image dimensions for geometry calculations (assume square for now)
+      const imgW = 512; // Default assumption
+      const imgH = 512;
       
-      if (aspect >= 4.0 && h <= 0.25 * w) {
-        console.log("Belt geometry detected: aspect =", aspect, ", h/w =", h/w);
-        category = "accessory";
-        subcategory = "belt";
-        bbox = [maxAspectBox.box.xmin, maxAspectBox.box.ymin, maxAspectBox.box.xmax, maxAspectBox.box.ymax];
-        trace.push({ step: "LABEL", source: "heuristic", base: { label: maxAspectBox.label, score: maxAspectBox.score }, final: "accessory/belt" });
+      mapped = chooseAndMap(preds, imgW, imgH, title, imagePath);
+      
+      if (mapped) {
+        category = mapped.category;
+        subcategory = mapped.subcategory;
+        bbox = mapped.base.box ? [mapped.base.box.xmin, mapped.base.box.ymin, mapped.base.box.xmax, mapped.base.box.ymax] : null;
         
-        // Extract color
+        trace.push({ step: "LABEL", source: mapped.source ?? "yolos", base: mapped.base, final: `${mapped.category}/${mapped.subcategory}` });
+        
+        // Step 3: Compute color from full image
+        console.log("Step 3: Computing color...");
         try {
           const colorData = await extractDominantColor(base64Image);
           colorHex = colorData.hex;
@@ -460,129 +480,38 @@ Deno.serve(async (req) => {
           trace.push({ step: "COLOR", status: 0, error: colorError.message });
         }
       } else {
-        console.log("No confident YOLOS detection found");
-        trace.push({ step: "FASHION_SEG", status: 204, error: "no-confident-detections" });
+        console.log("No confident mapping found from YOLOS predictions");
+        trace.push({ step: "LABEL", status: 204, error: "no-confident-mapping" });
       }
-    } else if (fUrl) {
+    } else {
       console.log("No YOLOS detections found");
-      trace.push({ step: "FASHION_SEG", status: 204, error: "no-detections" });
+      trace.push({ step: "LABEL", status: 204, error: "no-detections" });
     }
 
-    // Fallback strategies only if YOLOS failed completely
-    if (!category) {
-      console.log("Step 4: Using fallback strategies...");
-      
-      // Extract color first (always do this)
+    // Step 4: Always extract color even if no category detected
+    if (!colorHex) {
+      console.log("Step 4: Computing color (fallback)...");
       try {
         const colorData = await extractDominantColor(base64Image);
         colorHex = colorData.hex;
         colorName = colorData.name;
+        console.log("Color extracted (fallback):", colorName, colorHex);
       } catch (colorError) {
         console.warn("Color extraction failed:", colorError.message);
         colorName = 'brown';
         colorHex = '#8B5A2B';
       }
-
-      // Try filename heuristic when YOLOS returns nothing
-      console.log("Step 4a: Trying filename heuristic...");
-      const { data: itemData } = await supabase
-        .from('items')
-        .select('title')
-        .eq('id', itemId)
-        .single();
-      
-      const hint = ((itemData?.title || '') + ' ' + imagePath).toLowerCase();
-      if (/\bbelt\b/.test(hint)) {
-        category = 'accessory';
-        subcategory = 'belt';
-        console.log("Filename heuristic: detected belt");
-      } else if (/\bboots?\b/.test(hint)) {
-        category = 'shoes';
-        subcategory = 'boots';
-        console.log("Filename heuristic: detected boots");
-      } else if (/\bhat\b|\bcap\b|\bbeanie\b/.test(hint)) {
-        category = 'accessory';
-        subcategory = 'hat';
-        console.log("Filename heuristic: detected hat");
-      } else if (/\bbag\b|\btote\b|\bshoulder\b/.test(hint)) {
-        category = 'bag';
-        subcategory = 'handbag';
-        console.log("Filename heuristic: detected bag");
-      } else if (/\bsneaker\b|\bshoe\b/.test(hint)) {
-        category = 'shoes';
-        subcategory = 'sneakers';
-        console.log("Filename heuristic: detected sneakers");
-      } else if (/\bjeans\b|\bpants\b|\btrousers\b/.test(hint)) {
-        category = 'bottom';
-        subcategory = 'trousers';
-        console.log("Filename heuristic: detected trousers");
-      } else if (/\bskirt\b/.test(hint)) {
-        category = 'bottom';
-        subcategory = 'skirt';
-        console.log("Filename heuristic: detected skirt");
-      } else if (/\bdress\b/.test(hint)) {
-        category = 'dress';
-        subcategory = 'dress';
-        console.log("Filename heuristic: detected dress");
-      } else if (/\bcoat\b|\bblazer\b/.test(hint)) {
-        category = 'outerwear';
-        subcategory = 'jacket';
-        console.log("Filename heuristic: detected outerwear");
-      } else if (/\bsweater\b/.test(hint)) {
-        category = 'top';
-        subcategory = 'sweater';
-        console.log("Filename heuristic: detected sweater");
-      } else if (/\btshirt\b|\btee\b/.test(hint)) {
-        category = 'top';
-        subcategory = 't-shirt';
-        console.log("Filename heuristic: detected t-shirt");
-      } else {
-        // No confident match - leave category/subcategory as null
-        console.log("No confident category detected - leaving as null");
-      }
-
-      // Try caption as last resort if available
-      if (!category) {
-        try {
-          console.log("Step 4b: Trying caption fallback...");
-          const captionResult = await tryCaption(base64Image);
-          trace.push(...captionResult.trace);
-
-          const caption = captionResult.caption.toLowerCase();
-          if (caption.includes('dress')) {
-            category = 'dress';
-            subcategory = 'dress';
-          } else if (caption.includes('shirt') || caption.includes('top')) {
-            category = 'top';
-            subcategory = 'shirt';
-          } else if (caption.includes('pants') || caption.includes('trousers')) {
-            category = 'bottom';
-            subcategory = 'trousers';
-          } else if (caption.includes('bag')) {
-            category = 'bag';
-            subcategory = 'handbag';
-          }
-          // Don't set defaults - leave as null if no confident match
-          
-          if (category) {
-            console.log("Caption fallback result:", category, subcategory);
-          } else {
-            console.log("Caption fallback: no confident category");
-          }
-        } catch (captionError) {
-          console.warn("Caption fallback failed:", captionError.message);
-          trace.push({ step: "CAPTION", status: 0, error: captionError.message });
-          // Don't set defaults - leave category/subcategory as null
-        }
-      }
     }
 
-    // Step 5: Update database (never throw errors)
+    // Step 5: Update database (never throw errors) - only if we have confident mapping
     console.log("Step 5: Updating item in database...");
     const updateData: any = {};
     
-    if (category) updateData.category = category;
-    if (subcategory) updateData.subcategory = subcategory;
+    // Only update category/subcategory if we have a confident mapping
+    if (category && subcategory) {
+      updateData.category = category;
+      updateData.subcategory = subcategory;
+    }
     if (colorHex) updateData.color_hex = colorHex;
     if (colorName) updateData.color_name = colorName;
     if (attributes) updateData.attributes = attributes;
