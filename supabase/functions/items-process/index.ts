@@ -229,8 +229,13 @@ Deno.serve(async (req) => {
     console.log("[DEBUG] CAPTION_URL raw:", Deno.env.get("CAPTION_URL"));
     console.log("[DEBUG] INFERENCE_API_TOKEN raw:", Deno.env.get("INFERENCE_API_TOKEN"));
     
-    const { itemId, imagePath } = await req.json();
-    console.log("[DEBUG] Received:", { itemId, imagePath });
+    const body = await req.json();
+    const { itemId, imagePath, debug } = body;
+    console.log("[DEBUG] Received:", { itemId, imagePath, debug });
+    
+    // Initialize trace for debugging
+    const trace: Array<{step: string, status?: number, ms?: number, error?: string}> = [];
+    
     if (!itemId || !imagePath) {
       return new Response(JSON.stringify({ ok: false, error: "itemId and imagePath required" }), {
         status: 400, headers: { ...cors, "Content-Type": "application/json" },
@@ -249,8 +254,47 @@ Deno.serve(async (req) => {
     if (dlErr) throw new Error(`Failed to download image: ${dlErr.message}`);
     const buf = new Uint8Array(await img.arrayBuffer());
     const base64Image = uint8ToBase64(buf);
+    console.log("[DEBUG] Image downloaded and converted to base64");
 
-    // STEP 1: DETECT (optional)
+    // STEP 1: CAPTION FIRST (every time for closet items)
+    console.log(`[CAPTION] Starting caption analysis (first step)...`);
+    const captionStart = Date.now();
+    const { sub, cat, caption } = await labelFromCaption(base64Image);
+    const captionMs = Date.now() - captionStart;
+    
+    if (caption) {
+      trace.push({ step: "CAPTION", status: 200, ms: captionMs });
+      console.log(`[CAPTION] SUCCESS: "${caption}" -> subcategory: ${sub || 'none'}, category: ${cat || 'none'} (${captionMs}ms)`);
+    } else {
+      trace.push({ step: "CAPTION", status: 0, ms: captionMs, error: "No caption returned" });
+      console.log(`[CAPTION] FAILED: No caption returned (${captionMs}ms)`);
+    }
+    
+    // Color detection: first try caption text, then dominant color analysis
+    let colorName: string | null = null;
+    let colorHex: string | null = null;
+    
+    if (caption) {
+      const lc = caption.toLowerCase();
+      for (const k of Object.keys(COLOR_WORDS)) {
+        if (lc.includes(k)) { 
+          colorName = (k === "grey" ? "gray" : k); 
+          colorHex = COLOR_WORDS[k]; 
+          console.log(`[COLOR] Found color word in caption: ${colorName}`);
+          break; 
+        }
+      }
+    }
+    
+    if (!colorName) {
+      console.log(`[COLOR] No color word found, analyzing dominant color...`);
+      const dom = await extractDominantColor(base64Image);
+      colorName = dom.name; 
+      colorHex = dom.hex;
+      console.log(`[COLOR] Dominant color: ${colorName} (${colorHex})`);
+    }
+
+    // STEP 2: DETECT (optional - skipped for closet items)
     const USE_DETECT = (Deno.env.get("ITEMS_USE_DETECT") ?? "0") !== "0";
     let cropBase64ForEmbed = base64Image; // default whole image
     let hadBoxes = false;
@@ -258,6 +302,7 @@ Deno.serve(async (req) => {
 
     if (USE_DETECT && DETECT_URL) {
       console.log(`[DETECT] Starting detection...`);
+      const detectStart = Date.now();
       
       try {
         const detectBody = isHFHosted(DETECT_URL)
@@ -270,32 +315,31 @@ Deno.serve(async (req) => {
           body: JSON.stringify(detectBody),
         });
         
-        const detectTxt = await detectRes.text();
-        let detectJson: any = {};
-        try { detectJson = JSON.parse(detectTxt); } catch {}
-        console.log("[DETECT] status", detectRes.status, "len", detectTxt.length, "preview:", detectTxt.slice(0, 160));
+        const detectMs = Date.now() - detectStart;
+        trace.push({ step: "DETECT", status: detectRes.status, ms: detectMs });
         
-        if (!detectRes.ok) {
-          console.warn(`[DETECT] Failed: ${detectRes.status} - falling back to whole image`);
-        } else {
+        if (detectRes.ok) {
+          const detectJson = await detectRes.json().catch(() => ({}));
           const boxes = Array.isArray(detectJson?.boxes) ? detectJson.boxes : [];
           if (boxes.length > 0) {
             hadBoxes = true;
-            // pick the best box (highest score or largest area)
-            const best = boxes
-              .slice()
-              .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))[0];
+            const best = boxes.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))[0];
             bbox = best;
             console.log(`[DETECT] Found ${boxes.length} boxes, using best with score ${best.score ?? 'N/A'}`);
           } else {
             console.warn("[DETECT] 0 boxes — using whole image as crop");
           }
+        } else {
+          console.warn(`[DETECT] Failed: ${detectRes.status}`);
         }
       } catch (error) {
-        console.warn("[DETECT] Exception:", error.message, "- falling back to whole image");
+        const detectMs = Date.now() - detectStart;
+        trace.push({ step: "DETECT", status: 0, ms: detectMs, error: error.message });
+        console.warn("[DETECT] Exception:", error.message);
       }
     } else {
       console.log("[DETECT] Skipped for items (ITEMS_USE_DETECT=0)");
+      trace.push({ step: "DETECT", status: 0, ms: 0, error: "Skipped (ITEMS_USE_DETECT=0)" });
     }
 
     // STEP 2: SEGMENT (optional, only if we had a detection)
@@ -371,6 +415,7 @@ Deno.serve(async (req) => {
     let embedding: number[] | null = null;
     
     if (EMBED_URL) {
+      const embedStart = Date.now();
       try {
         const body = isHFHosted(EMBED_URL)
           ? { inputs: cropBase64ForEmbed }
@@ -382,17 +427,11 @@ Deno.serve(async (req) => {
           body: JSON.stringify(body),
         });
 
+        const embedMs = Date.now() - embedStart;
+        trace.push({ step: "EMBED", status: res.status, ms: embedMs });
+
         if (res.status === 404) {
-          console.warn("[EMBED] 404 at", EMBED_URL, "— trying text fallback");
-          // Try caption-based text embedding fallback
-          const captionResult = await labelFromCaption(cropBase64ForEmbed);
-          if (captionResult?.sub) {
-            const textEmbed = await embedTextFallback(`clothing item: ${captionResult.sub}`, infHeaders);
-            if (textEmbed) {
-              embedding = textEmbed;
-              console.log("[EMBED] Text fallback successful");
-            }
-          }
+          console.warn("[EMBED] 404 at", EMBED_URL, "— skipping embedding");
         } else if (!res.ok) {
           const txt = await res.text().catch(() => "");
           console.warn("[EMBED] non-2xx", res.status, txt.slice(0, 160));
@@ -404,39 +443,13 @@ Deno.serve(async (req) => {
           }
         }
       } catch (e) {
-        console.warn("[EMBED] exception", String((e as Error)?.message ?? e));
+        const embedMs = Date.now() - embedStart;
+        trace.push({ step: "EMBED", status: 0, ms: embedMs, error: String(e?.message ?? e) });
+        console.warn("[EMBED] exception", String(e?.message ?? e));
       }
     } else {
       console.log("[EMBED] Skipped - EMBED_URL not configured");
-    }
-
-    // Caption-based garment identification
-    console.log(`[CAPTION] Analyzing image for garment identification...`);
-    const { sub, cat, caption } = await labelFromCaption(cropBase64ForEmbed);
-    console.log(`[CAPTION] Result: "${caption}" -> subcategory: ${sub || 'none'}, category: ${cat || 'none'}`);
-    
-    // Color detection: first try caption text, then dominant color analysis
-    let colorName: string | null = null;
-    let colorHex: string | null = null;
-    
-    if (caption) {
-      const lc = caption.toLowerCase();
-      for (const k of Object.keys(COLOR_WORDS)) {
-        if (lc.includes(k)) { 
-          colorName = (k === "grey" ? "gray" : k); 
-          colorHex = COLOR_WORDS[k]; 
-          console.log(`[COLOR] Found color word in caption: ${colorName}`);
-          break; 
-        }
-      }
-    }
-    
-    if (!colorName) {
-      console.log(`[COLOR] No color word found, analyzing dominant color...`);
-      const dom = await extractDominantColor(cropBase64ForEmbed);
-      colorName = dom.name; 
-      colorHex = dom.hex;
-      console.log(`[COLOR] Dominant color: ${colorName} (${colorHex})`);
+      trace.push({ step: "EMBED", status: 0, ms: 0, error: "EMBED_URL not configured" });
     }
 
     // Only update NULL values (respect manual edits)
@@ -472,17 +485,22 @@ Deno.serve(async (req) => {
       console.warn("[DB] items update error", updErr.message);
     }
 
-    const embeddingDims = embedding && Array.isArray(embedding) ? embedding.length : 0;
-    console.log(`[SUCCESS] Pipeline completed - embedding dims: ${embeddingDims}`);
+    console.log(`[SUCCESS] Pipeline completed - caption: ${!!caption}, embedded: ${!!embedding}`);
     
-    // Always return 200 with clear payload
-    return new Response(JSON.stringify({
+    // Always return 200 with clear payload (include trace if debug mode)
+    const response: any = {
       ok: true,
       embedded: !!embedding,
       label: sub ?? null,
       category: cat ?? null,
       color: colorName ?? null
-    }), { 
+    };
+    
+    if (debug) {
+      response.trace = trace;
+    }
+    
+    return new Response(JSON.stringify(response), { 
       headers: { ...cors, "Content-Type": "application/json" }
     });
     

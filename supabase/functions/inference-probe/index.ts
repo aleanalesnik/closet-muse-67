@@ -72,29 +72,38 @@ Deno.serve(async (req) => {
     const DETECT_URL = Deno.env.get("DETECT_URL");
     const SEGMENT_URL = Deno.env.get("SEGMENT_URL");
     const EMBED_URL = Deno.env.get("EMBED_URL");
+    const CAPTION_URL = Deno.env.get("CAPTION_URL");
+    const CLASSIFY_URL = Deno.env.get("CLASSIFY_URL");
     
-    if (!DETECT_URL || !EMBED_URL) {
-      return new Response(JSON.stringify({ 
-        ok: false, 
-        error: "Missing required endpoints: DETECT_URL or EMBED_URL" 
-      }), {
-        status: 400, 
-        headers: { ...cors, "Content-Type": "application/json" }
-      });
-    }
+    console.log(`[PROBE] URLs configured:`, {
+      DETECT_URL: !!DETECT_URL,
+      SEGMENT_URL: !!SEGMENT_URL, 
+      EMBED_URL: !!EMBED_URL,
+      CAPTION_URL: !!CAPTION_URL,
+      CLASSIFY_URL: !!CLASSIFY_URL
+    });
 
     const infHeaders = buildInferenceHeaders();
     console.log(`[PROBE] Starting endpoint health checks...`);
 
-    // Probe all endpoints in parallel
-    const probes = [
-      probeEndpoint(DETECT_URL, "DETECT", infHeaders),
-      probeEndpoint(EMBED_URL, "EMBED", infHeaders),
-    ];
+    // Probe all configured endpoints in parallel
+    const probes: Promise<any>[] = [];
     
-    // Add SEGMENT probe if URL is configured
-    if (SEGMENT_URL) {
-      probes.push(probeEndpoint(SEGMENT_URL, "SEGMENT", infHeaders));
+    if (DETECT_URL) probes.push(probeEndpoint(DETECT_URL, "DETECT", infHeaders));
+    if (EMBED_URL) probes.push(probeEndpoint(EMBED_URL, "EMBED", infHeaders));
+    if (SEGMENT_URL) probes.push(probeEndpoint(SEGMENT_URL, "SEGMENT", infHeaders));
+    if (CAPTION_URL) probes.push(probeEndpoint(CAPTION_URL, "CAPTION", infHeaders));
+    if (CLASSIFY_URL) probes.push(probeEndpoint(CLASSIFY_URL, "CLASSIFY", infHeaders));
+
+    if (probes.length === 0) {
+      return new Response(JSON.stringify({ 
+        ok: false, 
+        error: "No inference endpoints configured",
+        timestamp: new Date().toISOString()
+      }), {
+        status: 400, 
+        headers: { ...cors, "Content-Type": "application/json" }
+      });
     }
 
     const results = await Promise.all(probes);
