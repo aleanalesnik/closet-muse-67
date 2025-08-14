@@ -248,8 +248,8 @@ Deno.serve(async (req) => {
     const SEGMENT_URL = Deno.env.get("SEGMENT_URL");
     const EMBED_URL = Deno.env.get("EMBED_URL");
     
-    if (!DETECT_URL || !EMBED_URL) {
-      throw new Error("Missing DETECT_URL or EMBED_URL");
+    if (!EMBED_URL) {
+      throw new Error("Missing EMBED_URL");
     }
     const infHeaders = buildInferenceHeaders();
 
@@ -259,13 +259,13 @@ Deno.serve(async (req) => {
     const buf = new Uint8Array(await img.arrayBuffer());
     const base64Image = uint8ToBase64(buf);
 
-    // STEP 1: DETECT (optional)
-    const ITEMS_USE_DETECT = Deno.env.get("ITEMS_USE_DETECT") !== "0"; // default: use detection
+    // STEP 1: DETECT (optional based on env flag)
+    const USE_DETECT = (Deno.env.get("ITEMS_USE_DETECT") ?? "0") !== "0";
     let cropBase64ForEmbed = base64Image; // default: whole image
-    let usedDetection = false;
+    let hadBoxes = false;
     let bbox = null;
 
-    if (ITEMS_USE_DETECT) {
+    if (USE_DETECT && DETECT_URL) {
       console.log(`[DETECT] Starting detection...`);
       
       const detectBody = isHFHosted(DETECT_URL)
@@ -287,9 +287,9 @@ Deno.serve(async (req) => {
         console.warn(`[DETECT] Failed: ${detectRes.status} - falling back to whole image`);
       } else {
         const boxes = Array.isArray(detectJson?.boxes) ? detectJson.boxes : [];
+        hadBoxes = boxes.length > 0;
         
-        if (boxes.length > 0) {
-          usedDetection = true;
+        if (hadBoxes) {
           // pick the best box (highest score or largest area)
           const best = boxes
             .slice()
@@ -301,28 +301,32 @@ Deno.serve(async (req) => {
         }
       }
     } else {
-      console.log("[DETECT] Skipped (ITEMS_USE_DETECT=0)");
+      console.log("[DETECT] Skipped for items (ITEMS_USE_DETECT=0)");
     }
 
     // STEP 2: SEGMENT (optional, only if we had a detection)
     let maskBase64 = null;
     
-    if (SEGMENT_URL && usedDetection && bbox) {
+    if (SEGMENT_URL && hadBoxes && bbox) {
       console.log(`[SEGMENT] Starting segmentation...`);
-      const segmentData = await callInferenceWithRetry(
-        SEGMENT_URL, 
-        { inputs: { image: base64Image, bbox } }, 
-        "SEGMENT", 
-        infHeaders
-      );
-      
-      maskBase64 = segmentData?.mask || null;
-      cropBase64ForEmbed = segmentData?.crop || base64Image;
-      
-      if (!segmentData?.crop) {
-        console.log(`[SEGMENT] Warning: No crop returned, using original image`);
+      try {
+        const segmentData = await callInferenceWithRetry(
+          SEGMENT_URL, 
+          { inputs: { image: base64Image, bbox } }, 
+          "SEGMENT", 
+          infHeaders
+        );
+        
+        maskBase64 = segmentData?.mask || null;
+        cropBase64ForEmbed = segmentData?.crop || base64Image;
+        
+        if (!segmentData?.crop) {
+          console.log(`[SEGMENT] Warning: No crop returned, using original image`);
+        }
+      } catch (error) {
+        console.warn(`[SEGMENT] Failed:`, error.message);
       }
-    } else if (SEGMENT_URL && !usedDetection) {
+    } else if (SEGMENT_URL && !hadBoxes) {
       console.log(`[SEGMENT] Skipped - no detection bbox available`);
     } else if (!SEGMENT_URL) {
       console.log(`[SEGMENT] Skipped - SEGMENT_URL not configured`);
@@ -356,7 +360,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // STEP 3: EMBED with fallback to text embedding
+    // STEP 3: EMBED with comprehensive error handling
     console.log(`[EMBED] Starting embedding...`);
     let embedding = null;
     
@@ -371,27 +375,30 @@ Deno.serve(async (req) => {
         body: JSON.stringify(embedBody),
       });
       
-      if (!embedRes.ok) {
-        throw new Error(`EMBED failed: ${embedRes.status}`);
-      }
-      
-      const embedData = await embedRes.json();
-      embedding = embedData?.embedding;
-    } catch (error) {
-      if (error.message.includes('404')) {
-        console.log(`[EMBED] 404 fallback: captioning crop for text embedding`);
-        // Caption the crop first
+      if (embedRes.status === 404) {
+        console.warn("[EMBED] 404 at", EMBED_URL, "— using text fallback");
+        // Try caption-based text embedding fallback
         const captionResult = await captionAndMatch(cropBase64ForEmbed);
         if (captionResult?.label) {
           const textEmbed = await embedTextFallback(`clothing item: ${captionResult.label}`, infHeaders);
-          if (textEmbed) embedding = textEmbed;
+          if (textEmbed) {
+            embedding = textEmbed;
+            console.log("[EMBED] Text fallback successful");
+          }
         }
+      } else if (!embedRes.ok) {
+        console.warn(`[EMBED] Failed: ${embedRes.status} - continuing without embedding`);
+      } else {
+        const embedData = await embedRes.json();
+        embedding = embedData?.embedding;
       }
-      if (!embedding) throw error;
+    } catch (error) {
+      console.warn("[EMBED] Exception:", error.message, "- continuing without embedding");
     }
     
+    // Continue processing even without embedding
     if (!embedding || !Array.isArray(embedding)) {
-      throw new Error("Embedding returned no valid embedding array");
+      console.warn("[EMBED] No valid embedding - item will be stored without vector search capability");
     }
 
     // Extract dominant color from crop
@@ -426,11 +433,18 @@ Deno.serve(async (req) => {
     // Atomic database updates
     // Use extracted colors instead of placeholders
     
-    // Upsert embedding
-    const { error: upsertErr } = await supabase
-      .from("item_embeddings")
-      .upsert({ item_id: itemId, embedding });
-    if (upsertErr) throw new Error(`Failed to upsert embedding: ${upsertErr.message}`);
+    // Upsert embedding (only if we have one)
+    if (embedding && Array.isArray(embedding)) {
+      const { error: upsertErr } = await supabase
+        .from("item_embeddings")
+        .upsert({ item_id: itemId, embedding });
+      if (upsertErr) {
+        console.warn(`Failed to upsert embedding: ${upsertErr.message}`);
+        // Don't throw - continue with other updates
+      }
+    } else {
+      console.log("[EMBED] Skipping embedding insert - no valid vector available");
+    }
 
     // Update items with conditional category/subcategory patching
     const patch: any = { 
@@ -450,8 +464,9 @@ Deno.serve(async (req) => {
       .eq("id", itemId);
     if (updErr) throw new Error(`Failed to update item: ${updErr.message}`);
 
-    console.log(`[SUCCESS] Pipeline completed - embedding dims: ${embedding.length}`);
-    return new Response(JSON.stringify({ ok: true, embedding_dims: embedding.length }), {
+    const embeddingDims = embedding && Array.isArray(embedding) ? embedding.length : 0;
+    console.log(`[SUCCESS] Pipeline completed - embedding dims: ${embeddingDims}`);
+    return new Response(JSON.stringify({ ok: true, embedding_dims: embeddingDims }), {
       headers: { ...cors, "Content-Type": "application/json" },
     });
   } catch (e) {

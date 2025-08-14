@@ -70,29 +70,21 @@ export default function Closet({ user }: ClosetProps) {
 
     setUploading(true);
     try {
-      const { itemId, imagePath } = await uploadAndProcessItem(file, file.name.split('.')[0]);
+      const { itemId, fn } = await uploadAndProcessItem(file, file.name.split('.')[0]);
       
-      // Add processing state
-      setProcessing(prev => new Set([...prev, itemId]));
-      
-      toast({ 
-        title: 'Processing started', 
-        description: "We're tagging your item…" 
+      toast({
+        title: fn?.ok !== false ? "Processing started" : "Uploaded",
+        description: fn?.ok !== false ? "We're tagging your item…" : "We'll retry processing in the background."
       });
 
-      // Refresh items list to show the new item and get updated data after processing
+      // Refresh items list to show the new item
       await loadItems();
       
+    } catch (err: any) {
       toast({ 
-        title: 'Item processed successfully!',
-        description: 'Your item has been added with tags.' 
-      });
-      
-    } catch (error: any) {
-      toast({ 
-        title: 'Upload failed', 
-        description: error.message,
-        variant: 'destructive' 
+        title: "Upload failed", 
+        description: err?.message ?? String(err), 
+        variant: "destructive" 
       });
     } finally {
       setUploading(false);

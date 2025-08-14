@@ -34,7 +34,13 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   // 5) call Edge Function (client uses the user's JWT automatically)
   const { data: fnData, error: fnErr } = await supabase.functions
     .invoke("items-process", { body: { itemId, imagePath } });
-  if (fnErr) throw fnErr;
+
+  if (fnErr) {
+    const msg = (fnErr as any)?.message || "Edge Function failed";
+    console.error("items-process invoke error:", fnErr);
+    // don't throw yet — we still created the item row successfully
+    return { itemId, imagePath, fn: { ok: false, error: msg } };
+  }
 
   return { itemId, imagePath, fn: fnData };
 }
