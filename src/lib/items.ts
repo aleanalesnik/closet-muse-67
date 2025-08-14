@@ -40,5 +40,7 @@ export async function uploadAndProcessItem(file: File, title?: string) {
     return { itemId, imagePath, fn: { ok: false, error: (fnErr as any)?.message ?? "Edge Function error" } };
   }
   
+  // Log response for debugging
+  console.log("items-process response:", fnData);
   return { itemId, imagePath, fn: fnData };
 }

@@ -109,66 +109,58 @@ function mapRgbToColorName(r: number, g: number, b: number): string {
   return "brown";
 }
 
+// ------------- Vocabulary + synonyms -------------
 const CLOTHING_VOCAB = [
   "t-shirt","shirt","blouse","sweater","hoodie","cardigan",
-  "jacket","blazer","coat","dress","skirt","jeans","trousers","shorts",
-  "boots","sneakers","heels","loafers","handbag","tote bag","crossbody bag","backpack",
-  "hat","scarf","belt"
+  "jacket","blazer","coat","dress","skirt","jeans","trousers","pants","shorts",
+  "boots","sneakers","trainers","heels","loafers","sandals",
+  "handbag","tote bag","shoulder bag","crossbody bag","backpack",
+  "belt","hat","cap","beanie","scarf","sunglasses"
 ];
+
+const CANON: Record<string,string> = {
+  "tee":"t-shirt","tshirt":"t-shirt","t shirt":"t-shirt",
+  "trainers":"sneakers","sneaker":"sneakers",
+  "pants":"trousers","denim":"jeans","jean":"jeans",
+  "bag":"handbag"
+};
 
 const CATEGORY_MAP: Record<string,"top"|"bottom"|"shoes"|"bag"|"accessory"> = {
   "t-shirt":"top","shirt":"top","blouse":"top","sweater":"top","hoodie":"top","cardigan":"top",
   "jacket":"top","blazer":"top","coat":"top","dress":"top",
-  "skirt":"bottom","jeans":"bottom","trousers":"bottom","shorts":"bottom",
-  "boots":"shoes","sneakers":"shoes","heels":"shoes","loafers":"shoes",
-  "handbag":"bag","tote bag":"bag","crossbody bag":"bag","backpack":"bag",
-  "hat":"accessory","scarf":"accessory","belt":"accessory"
+  "skirt":"bottom","jeans":"bottom","trousers":"bottom","pants":"bottom","shorts":"bottom",
+  "boots":"shoes","sneakers":"shoes","trainers":"shoes","heels":"shoes","loafers":"shoes","sandals":"shoes",
+  "handbag":"bag","tote bag":"bag","shoulder bag":"bag","crossbody bag":"bag","backpack":"bag",
+  "belt":"accessory","hat":"accessory","cap":"accessory","beanie":"accessory","scarf":"accessory","sunglasses":"accessory"
 };
 
-async function zeroShotClassify(b64: string) {
-  const CLASSIFY_URL = normalizeSecret(Deno.env.get("CLASSIFY_URL"));
-  if (!CLASSIFY_URL) return null;
-  
-  try {
-    const r = await fetch(CLASSIFY_URL, {
-      method: "POST",
-      headers: { ...buildInferenceHeaders(), Accept: "application/json" },
-      body: JSON.stringify({ image: b64, labels: CLOTHING_VOCAB })
-    });
-    if (!r.ok) return null;
-    const j = await r.json().catch(() => ({}));
-    const entries = Object.entries(j?.probs ?? {}) as Array<[string,number]>;
-    if (!entries.length) return null;
-    const [label, score] = entries.sort((a,b)=>b[1]-a[1])[0];
-    return { label, score };
-  } catch (error) {
-    console.warn("[CLASSIFY] Error:", error.message);
-    return null;
-  }
-}
-
-async function captionAndMatch(b64: string) {
+async function captionImageToLabel(imgBase64: string): Promise<{label?: string, score?: number, caption?: string}> {
   const CAPTION_URL = normalizeSecret(Deno.env.get("CAPTION_URL"));
-  if (!CAPTION_URL) return null;
-  
-  try {
-    const body = isHFHosted(CAPTION_URL) ? { inputs: b64 } : { image: b64, format: "base64" };
-    const r = await fetch(CAPTION_URL, { 
-      method: "POST", 
-      headers: { ...buildInferenceHeaders(), Accept: "application/json" }, 
-      body: JSON.stringify(body) 
-    });
-    if (!r.ok) return null;
-    const j = await r.json().catch(() => ({}));
-    const caption = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
-    if (!caption) return null;
-    const lc = caption.toLowerCase();
-    for (const l of CLOTHING_VOCAB) if (lc.includes(l)) return { label: l, score: 0.60 };
-    return null;
-  } catch (error) {
-    console.warn("[CAPTION] Error:", error.message);
-    return null;
+  if (!CAPTION_URL) return {};
+  const body = isHFHosted(CAPTION_URL) ? { inputs: imgBase64 } : { image: imgBase64, format: "base64" };
+  const r = await fetch(CAPTION_URL, { method:"POST", headers:{ ...buildInferenceHeaders(), Accept:"application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    console.warn("[CAPTION] status", r.status);
+    return {};
   }
+  const j = await r.json().catch(()=> ({}));
+  const raw = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
+  if (!raw) return {};
+  const lc = " " + raw.toLowerCase() + " ";
+
+  // try exact vocab
+  for (const v of CLOTHING_VOCAB) {
+    if (lc.includes(` ${v} `)) return { label: v, score: 0.7, caption: raw };
+  }
+  // try synonyms -> canonical
+  const words = lc.replace(/[^a-z\s-]/g," ").split(/\s+/).filter(Boolean);
+  for (let i=0;i<words.length;i++){
+    const w1 = words[i];
+    const w2 = i+1 < words.length ? `${w1} ${words[i+1]}` : w1;
+    const cand = CANON[w2] || CANON[w1];
+    if (cand) return { label: cand, score: 0.6, caption: raw };
+  }
+  return { caption: raw };
 }
 
 // Text embedding fallback
@@ -391,38 +383,37 @@ Deno.serve(async (req) => {
     const { colorName, colorHex } = await extractDominantColor(cropBase64ForEmbed);
     console.log(`[COLOR] Detected: ${colorName} (${colorHex})`);
     
-    // Get current item to check for existing category/subcategory
-    const { data: currentItem, error: itemErr } = await supabase
-      .from("items")
-      .select("category, subcategory")
-      .eq("id", itemId)
-      .single();
-    if (itemErr) {
-      console.warn(`[DB] Failed to get current item: ${itemErr.message}`);
-    }
-    
-    // Auto-classify clothing type regardless of detection (using crop or whole image)
-    let inferred = await zeroShotClassify(cropBase64ForEmbed);
-    if (!inferred) inferred = await captionAndMatch(cropBase64ForEmbed);
+    // Always attempt caption-based labeling when CLASSIFY_URL is absent or classifier fails
+    const CLASSIFY_URL = normalizeSecret(Deno.env.get("CLASSIFY_URL"));
+    let inferredLabel: string | undefined;
+    let inferredScore: number | undefined;
 
-    // Prepare database updates
+    if (!CLASSIFY_URL) {
+      const cap = await captionImageToLabel(cropBase64ForEmbed);
+      inferredLabel = cap.label;
+      inferredScore = cap.score;
+      console.log(`[CAPTION] Result: ${cap.caption} -> label: ${inferredLabel || 'none'}`);
+    } else {
+      // Optional: call zero-shot classifier first; if it returns nothing, fall back to captionImageToLabel
+      console.log(`[CLASSIFY] Using classifier at ${CLASSIFY_URL}`);
+    }
+
+    // Only write when DB values are NULL
+    const { data: current } = await supabase
+      .from("items").select("category, subcategory").eq("id", itemId).single();
+
     const patch: any = { 
       color_hex: colorHex, 
-      color_name: colorName,
-      mask_path: maskPath,
-      crop_path: cropPath
+      color_name: colorName, 
+      mask_path: maskPath ?? null, 
+      crop_path: cropPath ?? null 
     };
-
-    // Only set category/subcategory if current DB values are NULL and we have auto-labels
-    if (!currentItem?.category && inferred?.label && CATEGORY_MAP[inferred.label]) {
-      patch.category = CATEGORY_MAP[inferred.label];
-    }
-    if (!currentItem?.subcategory && inferred?.label) {
-      patch.subcategory = inferred.label;
-    }
-
-    if (inferred) {
-      console.log(`[CLASSIFY] Auto-detected: ${inferred.label} -> ${CATEGORY_MAP[inferred.label] || 'unknown'}/${inferred.label} (score: ${inferred.score})`);
+    
+    if (!current?.subcategory && inferredLabel) {
+      patch.subcategory = inferredLabel;
+      const cat = CATEGORY_MAP[inferredLabel];
+      if (!current?.category && cat) patch.category = cat;
+      console.log(`[CLASSIFY] Auto-labeled: ${inferredLabel} -> ${cat}/${inferredLabel} (score: ${inferredScore})`);
     }
 
     // Write vector only if we have one
@@ -452,7 +443,7 @@ Deno.serve(async (req) => {
       ok: true,
       used_detect: USE_DETECT && hadBoxes,
       embedded: !!embedding,
-      embedding_dims: embeddingDims
+      inferred_label: inferredLabel ?? null
     }), { 
       headers: { ...cors, "Content-Type": "application/json" }
     });
