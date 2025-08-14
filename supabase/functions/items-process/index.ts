@@ -45,12 +45,12 @@ Deno.serve(async (req) => {
     }
 
     const supabase = getServiceClient();
-    const baseUrl = Deno.env.get("INFERENCE_BASE_URL");
-    const DETECT = Deno.env.get("DETECT_ENDPOINT");
-    const SEGMENT = Deno.env.get("SEGMENT_ENDPOINT");
-    const EMBED = Deno.env.get("EMBED_ENDPOINT");
-    if (!baseUrl || !DETECT || !SEGMENT || !EMBED) {
-      throw new Error("Missing one or more inference endpoints/base URL");
+    const DETECT_URL = Deno.env.get("DETECT_URL");
+    const EMBED_URL = Deno.env.get("EMBED_URL");
+    const SEGMENT_URL = Deno.env.get("SEGMENT_URL") || DETECT_URL; // fallback to DETECT for segmentation
+    
+    if (!DETECT_URL || !EMBED_URL) {
+      throw new Error("Missing DETECT_URL or EMBED_URL");
     }
     const infHeaders = buildInferenceHeaders();
 
@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
     const base64Image = uint8ToBase64(buf);
 
     // DETECT
-    const detectRes = await fetch(`${baseUrl}${DETECT}`, {
+    const detectRes = await fetch(DETECT_URL, {
       method: "POST", headers: infHeaders, body: JSON.stringify({ image: base64Image, format: "base64" }),
     });
     if (!detectRes.ok) {
@@ -73,8 +73,8 @@ Deno.serve(async (req) => {
     if (boxes.length === 0) throw new Error("No objects detected in image");
     const bbox = boxes[0];
 
-    // SEGMENT
-    const segmentRes = await fetch(`${baseUrl}${SEGMENT}`, {
+    // SEGMENT (using DETECT_URL as fallback since segmentation might not be separate)
+    const segmentRes = await fetch(SEGMENT_URL, {
       method: "POST", headers: infHeaders, body: JSON.stringify({ image: base64Image, bbox, format: "base64" }),
     });
     if (!segmentRes.ok) throw new Error(`Segmentation failed: ${segmentRes.status}`);
@@ -100,7 +100,7 @@ Deno.serve(async (req) => {
 
     // EMBED with robust fallback
     let embedding;
-    let embedUrl = Deno.env.get("EMBED_URL") || `${baseUrl}${EMBED}`;
+    let embedUrl = EMBED_URL;
     
     // Try multiple approaches for embedding
     const embedAttempts = [
