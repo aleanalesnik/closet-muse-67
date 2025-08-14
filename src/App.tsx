@@ -13,10 +13,8 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <Toaster />
-    <Sonner />
+function App() {
+  return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Index />} />
@@ -25,11 +23,10 @@ const App = () => (
         <Route path="/item/:id" element={<ItemDetailPage />} />
         <Route path="/sign-in-magic" element={<MagicLinkSignIn />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
-        {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
-  </QueryClientProvider>
-);
+  );
+}
 
 export default App;
