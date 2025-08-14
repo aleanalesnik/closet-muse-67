@@ -109,6 +109,7 @@ export type Database = {
           color_hex: string | null
           color_name: string | null
           created_at: string | null
+          crop_path: string | null
           id: string
           image_path: string
           mask_path: string | null
@@ -124,6 +125,7 @@ export type Database = {
           color_hex?: string | null
           color_name?: string | null
           created_at?: string | null
+          crop_path?: string | null
           id?: string
           image_path: string
           mask_path?: string | null
@@ -139,6 +141,7 @@ export type Database = {
           color_hex?: string | null
           color_name?: string | null
           created_at?: string | null
+          crop_path?: string | null
           id?: string
           image_path?: string
           mask_path?: string | null
