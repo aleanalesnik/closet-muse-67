@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { Image } from "https://deno.land/x/imagescript@1.2.15/mod.ts";
 
 function getServiceClient() {
   const url = Deno.env.get("SUPABASE_URL");
@@ -34,131 +35,125 @@ function normalizeSecret(v?: string | null) {
   return v!.trim();
 }
 
-async function extractDominantColor(base64Image: string): Promise<{ colorName: string; colorHex: string }> {
+// Color detection constants and helpers
+const COLOR_WORDS: Record<string,string> = {
+  "black":"#000000","white":"#ffffff","gray":"#808080","grey":"#808080",
+  "beige":"#d9c7a0","brown":"#8b5a2b","red":"#d13c3c","orange":"#f28c28",
+  "yellow":"#ffd84d","green":"#2e8b57","teal":"#2aa39a","cyan":"#22b8cf",
+  "blue":"#1e90ff","navy":"#001f54","purple":"#8a2be2","violet":"#7f00ff",
+  "pink":"#ff6fae","gold":"#d4af37","silver":"#c0c0c0"
+};
+
+function toHex(r:number,g:number,b:number){ 
+  const h=(n:number)=>Math.max(0,Math.min(255,Math.round(n))).toString(16).padStart(2,"0"); 
+  return `#${h(r)}${h(g)}${h(b)}`;
+}
+
+function nameFromHSV(h:number,s:number,v:number){
+  if (v < 0.18) return { name:"black", hex:"#000000" };
+  if (s < 0.10) return { name: v>0.85 ? "white" : "gray", hex: v>0.85 ? "#ffffff" : "#808080" };
+  const d = (x:number,y:number)=>Math.min(Math.abs(x-y), 360-Math.abs(x-y));
+  const buckets = [
+    ["red",0],["orange",25],["yellow",55],["green",110],["teal",165],
+    ["blue",210],["navy",225],["purple",275],["pink",330]
+  ] as const;
+  let best = buckets[0]; let bestD = 999;
+  for (const b of buckets){ const dist = d(h,b[1]); if (dist < bestD){ best=b; bestD=dist; } }
+  return { name: best[0], hex: COLOR_WORDS[best[0]] };
+}
+
+async function extractDominantColor(b64: string) {
   try {
-    const base64Data = base64Image.replace(/^data:image\/[^;]+;base64,/, '');
-    const imageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-    
-    const isPNG = imageBytes[0] === 0x89 && imageBytes[1] === 0x50;
-    const isJPEG = imageBytes[0] === 0xFF && imageBytes[1] === 0xD8;
-    
-    if (!isPNG && !isJPEG) {
-      throw new Error("Unsupported image format for color extraction");
+    // convert base64 → bytes
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const img = await Image.decode(bytes).catch(() => null);
+    if (!img) return { name: null, hex: null };
+
+    img.resize(48, 48); // downsample
+    let r=0,g=0,b=0,count=0;
+    for (let y=0; y<img.height; y++){
+      for (let x=0; x<img.width; x++){
+        const p = img.getPixelAt(x,y);
+        r += (p >> 24) & 0xff; g += (p >> 16) & 0xff; b += (p >> 8) & 0xff;
+        count++;
+      }
     }
-    
-    let r = 0, g = 0, b = 0, samples = 0;
-    
-    for (let i = 100; i < imageBytes.length - 2; i += 100) {
-      r += imageBytes[i];
-      g += imageBytes[i + 1];  
-      b += imageBytes[i + 2];
-      samples++;
+    r/=count; g/=count; b/=count;
+    // rgb → hsv
+    const rr=r/255, gg=g/255, bb=b/255;
+    const cmax = Math.max(rr,gg,bb), cmin = Math.min(rr,gg,bb), delta = cmax - cmin;
+    let h = 0;
+    if (delta !== 0) {
+      if (cmax === rr) h = 60 * (((gg - bb) / delta) % 6);
+      else if (cmax === gg) h = 60 * (((bb - rr) / delta) + 2);
+      else h = 60 * (((rr - gg) / delta) + 4);
     }
-    
-    if (samples === 0) {
-      throw new Error("No color samples extracted");
-    }
-    
-    r = Math.round(r / samples);
-    g = Math.round(g / samples);
-    b = Math.round(b / samples);
-    
-    const colorHex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-    const colorName = mapRgbToColorName(r, g, b);
-    
-    return { colorName, colorHex };
+    if (h < 0) h += 360;
+    const s = cmax === 0 ? 0 : delta / cmax;
+    const v = cmax;
+    const coarse = nameFromHSV(h,s,v);
+    return { name: coarse.name, hex: toHex(r,g,b) };
   } catch (error) {
     console.warn("Color extraction failed:", error.message);
-    return { colorName: "brown", colorHex: "#8B5A2B" };
+    return { name: "brown", hex: "#8B5A2B" };
   }
 }
 
-function mapRgbToColorName(r: number, g: number, b: number): string {
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const brightness = (r + g + b) / 3;
-  const saturation = max === 0 ? 0 : (max - min) / max;
-  
-  if (saturation < 0.3) {
-    if (brightness < 60) return "black";
-    if (brightness < 120) return "gray";
-    if (brightness < 200) return "light gray";
-    return "white";
-  }
-  
-  if (r > g && r > b) {
-    if (g > b * 1.5) return "yellow";
-    if (b > g * 1.2) return "purple";
-    return "red";
-  }
-  
-  if (g > r && g > b) {
-    if (r > b * 1.2) return "yellow";
-    if (b > r * 1.2) return "teal";
-    return "green";
-  }
-  
-  if (b > r && b > g) {
-    if (r > g * 1.2) return "purple";
-    if (g > r * 1.2) return "teal";
-    return "blue";
-  }
-  
-  if (r < 100 && g > 100 && b > 100) return "cyan";
-  
-  return "brown";
-}
-
-// ------------- Vocabulary + synonyms -------------
-const CLOTHING_VOCAB = [
+// Garment identification vocabulary and mappings
+const VOCAB = [
   "t-shirt","shirt","blouse","sweater","hoodie","cardigan",
   "jacket","blazer","coat","dress","skirt","jeans","trousers","pants","shorts",
   "boots","sneakers","trainers","heels","loafers","sandals",
   "handbag","tote bag","shoulder bag","crossbody bag","backpack",
-  "belt","hat","cap","beanie","scarf","sunglasses"
+  "belt","hat","cap","beanie","scarf","sunglasses","wallet"
 ];
 
 const CANON: Record<string,string> = {
   "tee":"t-shirt","tshirt":"t-shirt","t shirt":"t-shirt",
-  "trainers":"sneakers","sneaker":"sneakers",
+  "trainer":"sneakers","trainers":"sneakers","sneaker":"sneakers",
   "pants":"trousers","denim":"jeans","jean":"jeans",
-  "bag":"handbag"
+  "bag":"handbag","purse":"handbag","cap":"hat","baseball cap":"hat"
 };
 
-const CATEGORY_MAP: Record<string,"top"|"bottom"|"shoes"|"bag"|"accessory"> = {
+const CAT: Record<string,"top"|"bottom"|"shoes"|"bag"|"accessory"> = {
   "t-shirt":"top","shirt":"top","blouse":"top","sweater":"top","hoodie":"top","cardigan":"top",
   "jacket":"top","blazer":"top","coat":"top","dress":"top",
   "skirt":"bottom","jeans":"bottom","trousers":"bottom","pants":"bottom","shorts":"bottom",
-  "boots":"shoes","sneakers":"shoes","trainers":"shoes","heels":"shoes","loafers":"shoes","sandals":"shoes",
-  "handbag":"bag","tote bag":"bag","shoulder bag":"bag","crossbody bag":"bag","backpack":"bag",
-  "belt":"accessory","hat":"accessory","cap":"accessory","beanie":"accessory","scarf":"accessory","sunglasses":"accessory"
+  "boots":"shoes","sneakers":"shoes","heels":"shoes","loafers":"shoes","sandals":"shoes",
+  "handbag":"bag","tote bag":"bag","shoulder bag":"bag","crossbody bag":"bag","backpack":"bag","wallet":"bag",
+  "belt":"accessory","hat":"accessory","cap":"accessory","beanie":"accessory",
+  "scarf":"accessory","sunglasses":"accessory"
 };
 
-async function captionImageToLabel(imgBase64: string): Promise<{label?: string, score?: number, caption?: string}> {
+// Caption → label identification
+async function labelFromCaption(b64: string) {
   const CAPTION_URL = normalizeSecret(Deno.env.get("CAPTION_URL"));
   if (!CAPTION_URL) return {};
-  const body = isHFHosted(CAPTION_URL) ? { inputs: imgBase64 } : { image: imgBase64, format: "base64" };
-  const r = await fetch(CAPTION_URL, { method:"POST", headers:{ ...buildInferenceHeaders(), Accept:"application/json" }, body: JSON.stringify(body) });
+  const body = isHFHosted(CAPTION_URL) ? { inputs: b64 } : { image: b64, format: "base64" };
+  const r = await fetch(CAPTION_URL, {
+    method: "POST",
+    headers: { ...buildInferenceHeaders(), Accept: "application/json" },
+    body: JSON.stringify(body)
+  });
   if (!r.ok) {
     console.warn("[CAPTION] status", r.status);
     return {};
   }
-  const j = await r.json().catch(()=> ({}));
+  const j = await r.json().catch(() => ({}));
   const raw = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
   if (!raw) return {};
-  const lc = " " + raw.toLowerCase() + " ";
+  const lc = ` ${raw.toLowerCase()} `;
 
-  // try exact vocab
-  for (const v of CLOTHING_VOCAB) {
-    if (lc.includes(` ${v} `)) return { label: v, score: 0.7, caption: raw };
-  }
-  // try synonyms -> canonical
-  const words = lc.replace(/[^a-z\s-]/g," ").split(/\s+/).filter(Boolean);
-  for (let i=0;i<words.length;i++){
-    const w1 = words[i];
-    const w2 = i+1 < words.length ? `${w1} ${words[i+1]}` : w1;
+  // exact vocab hit
+  for (const v of VOCAB) if (lc.includes(` ${v} `)) return { sub: v, cat: CAT[v], caption: raw, conf: 0.7 };
+
+  // synonyms → canonical
+  const tokens = lc.replace(/[^a-z\s-]/g," ").split(/\s+/).filter(Boolean);
+  for (let i=0;i<tokens.length;i++){
+    const w1 = tokens[i];
+    const w2 = i+1 < tokens.length ? `${w1} ${tokens[i+1]}` : w1;
     const cand = CANON[w2] || CANON[w1];
-    if (cand) return { label: cand, score: 0.6, caption: raw };
+    if (cand) return { sub: cand, cat: CAT[cand], caption: raw, conf: 0.6 };
   }
   return { caption: raw };
 }
@@ -353,9 +348,9 @@ Deno.serve(async (req) => {
         if (res.status === 404) {
           console.warn("[EMBED] 404 at", EMBED_URL, "— trying text fallback");
           // Try caption-based text embedding fallback
-          const captionResult = await captionAndMatch(cropBase64ForEmbed);
-          if (captionResult?.label) {
-            const textEmbed = await embedTextFallback(`clothing item: ${captionResult.label}`, infHeaders);
+          const captionResult = await labelFromCaption(cropBase64ForEmbed);
+          if (captionResult?.sub) {
+            const textEmbed = await embedTextFallback(`clothing item: ${captionResult.sub}`, infHeaders);
             if (textEmbed) {
               embedding = textEmbed;
               console.log("[EMBED] Text fallback successful");
@@ -378,43 +373,48 @@ Deno.serve(async (req) => {
       console.log("[EMBED] Skipped - EMBED_URL not configured");
     }
 
-    // Extract dominant color from crop
-    console.log(`[COLOR] Extracting dominant color from crop...`);
-    const { colorName, colorHex } = await extractDominantColor(cropBase64ForEmbed);
-    console.log(`[COLOR] Detected: ${colorName} (${colorHex})`);
+    // Caption-based garment identification
+    console.log(`[CAPTION] Analyzing image for garment identification...`);
+    const { sub, cat, caption } = await labelFromCaption(cropBase64ForEmbed);
+    console.log(`[CAPTION] Result: "${caption}" -> subcategory: ${sub || 'none'}, category: ${cat || 'none'}`);
     
-    // Always attempt caption-based labeling when CLASSIFY_URL is absent or classifier fails
-    const CLASSIFY_URL = normalizeSecret(Deno.env.get("CLASSIFY_URL"));
-    let inferredLabel: string | undefined;
-    let inferredScore: number | undefined;
-
-    if (!CLASSIFY_URL) {
-      const cap = await captionImageToLabel(cropBase64ForEmbed);
-      inferredLabel = cap.label;
-      inferredScore = cap.score;
-      console.log(`[CAPTION] Result: ${cap.caption} -> label: ${inferredLabel || 'none'}`);
-    } else {
-      // Optional: call zero-shot classifier first; if it returns nothing, fall back to captionImageToLabel
-      console.log(`[CLASSIFY] Using classifier at ${CLASSIFY_URL}`);
+    // Color detection: first try caption text, then dominant color analysis
+    let colorName: string | null = null;
+    let colorHex: string | null = null;
+    
+    if (caption) {
+      const lc = caption.toLowerCase();
+      for (const k of Object.keys(COLOR_WORDS)) {
+        if (lc.includes(k)) { 
+          colorName = (k === "grey" ? "gray" : k); 
+          colorHex = COLOR_WORDS[k]; 
+          console.log(`[COLOR] Found color word in caption: ${colorName}`);
+          break; 
+        }
+      }
+    }
+    
+    if (!colorName) {
+      console.log(`[COLOR] No color word found, analyzing dominant color...`);
+      const dom = await extractDominantColor(cropBase64ForEmbed);
+      colorName = dom.name; 
+      colorHex = dom.hex;
+      console.log(`[COLOR] Dominant color: ${colorName} (${colorHex})`);
     }
 
-    // Only write when DB values are NULL
+    // Only update NULL values (respect manual edits)
     const { data: current } = await supabase
       .from("items").select("category, subcategory").eq("id", itemId).single();
 
     const patch: any = { 
-      color_hex: colorHex, 
-      color_name: colorName, 
       mask_path: maskPath ?? null, 
       crop_path: cropPath ?? null 
     };
     
-    if (!current?.subcategory && inferredLabel) {
-      patch.subcategory = inferredLabel;
-      const cat = CATEGORY_MAP[inferredLabel];
-      if (!current?.category && cat) patch.category = cat;
-      console.log(`[CLASSIFY] Auto-labeled: ${inferredLabel} -> ${cat}/${inferredLabel} (score: ${inferredScore})`);
-    }
+    if (!current?.subcategory && sub) patch.subcategory = sub;
+    if (!current?.category && cat) patch.category = cat;
+    patch.color_name = colorName ?? current?.color_name ?? null;
+    patch.color_hex = colorHex ?? current?.color_hex ?? null;
 
     // Write vector only if we have one
     if (embedding) {
@@ -441,9 +441,10 @@ Deno.serve(async (req) => {
     // Always return 200 with clear payload
     return new Response(JSON.stringify({
       ok: true,
-      used_detect: USE_DETECT && hadBoxes,
       embedded: !!embedding,
-      inferred_label: inferredLabel ?? null
+      label: sub ?? null,
+      category: cat ?? null,
+      color: colorName ?? null
     }), { 
       headers: { ...cors, "Content-Type": "application/json" }
     });
