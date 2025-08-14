@@ -75,9 +75,13 @@ export default function Closet({ user }: ClosetProps) {
       const { itemId, fn } = await uploadAndProcessItem(file, file.name.split('.')[0]);
       console.log("Upload completed:", { itemId, fn });
       
+      // Extract FASHION_SEG status for dev badge
+      const fashionSegStatus = fn?.trace?.find((t: any) => t.step === "FASHION_SEG")?.status;
+      const devBadge = import.meta.env.DEV && fashionSegStatus ? ` (YOLOS: ${fashionSegStatus})` : "";
+      
       toast({
         title: fn?.ok !== false ? "Processing started" : "Uploaded",
-        description: fn?.ok !== false ? "We're tagging your item…" : "We'll retry processing in the background."
+        description: (fn?.ok !== false ? "We're tagging your item…" : "We'll retry processing in the background.") + devBadge
       });
 
       // Refresh items list to show the new item
@@ -103,7 +107,7 @@ export default function Closet({ user }: ClosetProps) {
     
     try {
       const { data, error } = await supabase.functions.invoke("items-process", {
-        body: { itemId, imagePath }
+        body: { itemId, imagePath, debug: import.meta.env.DEV }
       });
       
       if (error) {

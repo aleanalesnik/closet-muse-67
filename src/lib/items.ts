@@ -35,9 +35,9 @@ export async function uploadAndProcessItem(file: File, title?: string) {
 
   const itemId = inserted.id as string;
 
-  // 5) call Edge Function (client uses the user's JWT automatically)
+  // 5) call Edge Function with debug in development
   const { data: fnData, error: fnErr } = await supabase.functions
-    .invoke("items-process", { body: { itemId, imagePath } });
+    .invoke("items-process", { body: { itemId, imagePath, debug: import.meta.env.DEV } });
 
   if (fnErr) {
     console.error("items-process invoke error:", fnErr);
