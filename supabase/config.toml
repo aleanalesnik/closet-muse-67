@@ -1,1 +1,13 @@
 project_id = "tqbjbugwwffdfhihpkcg"
+
+[functions.items-process]
+verify_jwt = false
+
+[functions.inspiration-start]
+verify_jwt = false
+
+[functions.inspiration-run]
+verify_jwt = false
+
+[functions.inference-probe]
+verify_jwt = false
