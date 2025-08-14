@@ -18,29 +18,41 @@ export type Database = {
         Row: {
           bbox: number[]
           category: string | null
+          color_hex: string | null
+          color_name: string | null
+          confidence: number | null
           crop_path: string | null
           embedding: string | null
           id: string
           mask_path: string | null
           query_id: string | null
+          subcategory: string | null
         }
         Insert: {
           bbox: number[]
           category?: string | null
+          color_hex?: string | null
+          color_name?: string | null
+          confidence?: number | null
           crop_path?: string | null
           embedding?: string | null
           id?: string
           mask_path?: string | null
           query_id?: string | null
+          subcategory?: string | null
         }
         Update: {
           bbox?: number[]
           category?: string | null
+          color_hex?: string | null
+          color_name?: string | null
+          confidence?: number | null
           crop_path?: string | null
           embedding?: string | null
           id?: string
           mask_path?: string | null
           query_id?: string | null
+          subcategory?: string | null
         }
         Relationships: [
           {
@@ -105,6 +117,7 @@ export type Database = {
       items: {
         Row: {
           attributes: Json | null
+          bbox: number[] | null
           brand: string | null
           category: string | null
           color_hex: string | null
@@ -122,6 +135,7 @@ export type Database = {
         }
         Insert: {
           attributes?: Json | null
+          bbox?: number[] | null
           brand?: string | null
           category?: string | null
           color_hex?: string | null
@@ -139,6 +153,7 @@ export type Database = {
         }
         Update: {
           attributes?: Json | null
+          bbox?: number[] | null
           brand?: string | null
           category?: string | null
           color_hex?: string | null

@@ -57,7 +57,7 @@ export default function InspirationPage() {
           onChange={onPick}
         />
         <Button size="lg" onClick={() => fileRef.current?.click()} disabled={loading}>
-          {loading ? "Uploading…" : "Upload & Analyze Photo"}
+          {loading ? "Uploading…" : "Find Your Style"}
         </Button>
       </div>
 

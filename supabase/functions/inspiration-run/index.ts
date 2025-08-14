@@ -27,8 +27,8 @@ function buildInferenceHeaders() {
 }
 
 function buildFashionHeaders() {
-  const authHeader = Deno.env.get("FASHION_AUTH_HEADER") || "x-api-key";
-  const authPrefix = Deno.env.get("FASHION_AUTH_PREFIX") || "";
+  const authHeader = Deno.env.get("FASHION_AUTH_HEADER") || "Authorization";
+  const authPrefix = Deno.env.get("FASHION_AUTH_PREFIX") || "Bearer";
   const apiToken = Deno.env.get("FASHION_API_TOKEN");
   
   const headers: Record<string, string> = {
@@ -310,6 +310,10 @@ async function createStubDetections(queryId: string, supabase: any) {
       query_id: queryId,
       bbox: [100, 150, 300, 450],
       category: "top",
+      subcategory: "t-shirt",
+      confidence: 0.95,
+      color_name: "blue",
+      color_hex: "#4A90E2",
       crop_path: null,
       mask_path: null,
       embedding: null
@@ -317,7 +321,11 @@ async function createStubDetections(queryId: string, supabase: any) {
     {
       query_id: queryId,
       bbox: [120, 460, 280, 600],
-      category: "bottom", 
+      category: "bottom",
+      subcategory: "trousers", 
+      confidence: 0.88,
+      color_name: "black",
+      color_hex: "#2C3E50",
       crop_path: null,
       mask_path: null,
       embedding: null

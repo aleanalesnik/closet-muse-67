@@ -26,8 +26,8 @@ function buildInferenceHeaders() {
 }
 
 function buildFashionHeaders() {
-  const authHeader = Deno.env.get("FASHION_AUTH_HEADER") || "x-api-key";
-  const authPrefix = Deno.env.get("FASHION_AUTH_PREFIX") || "";
+  const authHeader = Deno.env.get("FASHION_AUTH_HEADER") || "Authorization";
+  const authPrefix = Deno.env.get("FASHION_AUTH_PREFIX") || "Bearer";
   const apiToken = Deno.env.get("FASHION_API_TOKEN");
   
   const headers: Record<string, string> = {
@@ -239,65 +239,7 @@ async function tryCaption(base64Image: string): Promise<{ caption: string; url: 
   return { caption: "clothing item", url: "fallback", trace };
 }
 
-// Fashion segmentation function
-async function tryFashionSegmentation(base64Image: string): Promise<{
-  success: boolean;
-  detection?: any;
-  trace: any[];
-  crop?: string;
-  mask?: string;
-}> {
-  const FSEG_URL = Deno.env.get("FASHION_SEG_URL");
-  if (!FSEG_URL) {
-    return { success: false, trace: [{ step: "FASHION_SEG", status: "not_configured" }] };
-  }
-
-  const headers = buildFashionHeaders();
-  const trace: any[] = [];
-  const startTime = Date.now();
-
-  try {
-    const body = { inputs: base64Image, format: "base64" };
-    const response = await fetch(FSEG_URL, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body)
-    });
-
-    const status = response.status;
-    const ms = Date.now() - startTime;
-
-    if (response.ok) {
-      const result = await response.json();
-      
-      // Handle different response formats
-      let detections = Array.isArray(result) ? result : [result];
-      if (result.predictions) detections = result.predictions;
-      if (result.detections) detections = result.detections;
-
-      // Pick the largest/most confident detection
-      const bestDetection = detections.length > 0 ? detections[0] : null;
-
-      trace.push({ step: "FASHION_SEG", url: FSEG_URL, status, ms, mode: "json", detections: detections.length });
-
-      if (bestDetection) {
-        return {
-          success: true,
-          detection: bestDetection,
-          trace,
-          crop: bestDetection.crop_b64,
-          mask: bestDetection.mask_b64
-        };
-      }
-    }
-
-    trace.push({ step: "FASHION_SEG", url: FSEG_URL, status, ms, mode: "json" });
-    return { success: false, trace };
-  } catch (error) {
-    trace.push({ step: "FASHION_SEG", url: FSEG_URL, status: 0, ms: Date.now() - startTime, error: error.message });
-    return { success: false, trace };
-  }
-}
+// Caption fallback chain with multiple models (kept as safety net)
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -409,13 +351,18 @@ Deno.serve(async (req) => {
       trace.push({ step: "FASHION_SEG", status: "not_configured" });
     }
 
-    // Process YOLOS predictions
+    // Process YOLOS predictions and extract color
     const mainDetection = Array.isArray(preds) ? pickMainDetection(preds) : null;
+    let bbox: number[] | null = null;
+    
     if (mainDetection) {
-      console.log("Main detection:", mainDetection);
+      console.log("Main detection:", mainDetection.label, "score:", mainDetection.score);
       const { category: detectedCategory, subcategory: detectedSubcategory } = mapFashionLabel(mainDetection.label);
       category = detectedCategory;
       subcategory = detectedSubcategory;
+      
+      // Store bbox for future use
+      bbox = [mainDetection.box.xmin, mainDetection.box.ymin, mainDetection.box.xmax, mainDetection.box.ymax];
       
       // Extract color from full image (will upgrade to bbox crop later)
       const colorData = await extractDominantColor(base64Image);
@@ -456,7 +403,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Update item in database - only update null fields unless we have high confidence data
+    // Update item in database - include bbox if detected
     console.log("Updating item in database...");
     const updateData: any = {};
     
@@ -467,6 +414,7 @@ Deno.serve(async (req) => {
     if (attributes) updateData.attributes = attributes;
     if (cropPath) updateData.crop_path = cropPath;
     if (maskPath) updateData.mask_path = maskPath;
+    if (bbox) updateData.bbox = bbox;
 
     const { error: updateError } = await supabase
       .from('items')
@@ -540,6 +488,7 @@ Deno.serve(async (req) => {
       colorName,
       attributes,
       embedded,
+      bbox,
       ...(debug && { trace })
     };
 

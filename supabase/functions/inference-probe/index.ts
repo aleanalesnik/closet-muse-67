@@ -26,8 +26,8 @@ function buildInferenceHeaders() {
 }
 
 function buildFashionHeaders() {
-  const authHeader = Deno.env.get("FASHION_AUTH_HEADER") || "x-api-key";
-  const authPrefix = Deno.env.get("FASHION_AUTH_PREFIX") || "";
+  const authHeader = Deno.env.get("FASHION_AUTH_HEADER") || "Authorization";
+  const authPrefix = Deno.env.get("FASHION_AUTH_PREFIX") || "Bearer";
   const apiToken = Deno.env.get("FASHION_API_TOKEN");
   
   const headers: Record<string, string> = {
@@ -94,14 +94,11 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
 
   try {
-    // Get the configured endpoints from environment variables
+    // Get the configured endpoints from environment variables (cleaned up for YOLOS)
     const endpoints = {
-      DETECT: Deno.env.get("DETECT_URL"),
-      SEGMENT: Deno.env.get("SEGMENT_URL"), 
-      EMBED: Deno.env.get("EMBED_URL"),
-      CAPTION: Deno.env.get("CAPTION_URL"),
-      CLASSIFY: Deno.env.get("CLASSIFY_URL"),
-      FASHION_SEG: Deno.env.get("FASHION_SEG_URL")
+      FASHION_SEG: Deno.env.get("FASHION_SEG_URL"),
+      CAPTION: Deno.env.get("CAPTION_URLS")?.split(",")[0] || Deno.env.get("CAPTION_URL"), // First in chain
+      EMBED: Deno.env.get("EMBED_URL")
     };
 
     const headers = buildInferenceHeaders();
@@ -155,15 +152,17 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Probe other configured endpoints
+    // Probe other configured endpoints (CAPTION and EMBED only)
     Object.entries(endpoints)
       .filter(([name, url]) => name !== 'FASHION_SEG' && url) // Skip FASHION_SEG, handle separately
       .forEach(([name, url]) => {
-        const endpointHeaders = headers;
+        const endpointHeaders = buildInferenceHeaders(); // Use inference headers for caption/embed
         probePromises.push(
           probeEndpoint(url!, name, endpointHeaders).then(result => [name, result])
         );
       });
+
+    console.log(`[PROBE] Probing ${probePromises.length} total endpoints...`);
 
     const probeResults = await Promise.all(probePromises);
     const results = Object.fromEntries(probeResults);

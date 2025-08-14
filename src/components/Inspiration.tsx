@@ -266,7 +266,7 @@ export default function Inspiration({ user }: InspirationProps) {
             className="flex items-center gap-2"
           >
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            {uploading ? 'Uploading…' : 'Upload & Analyze Photo'}
+            {uploading ? 'Uploading…' : 'Find Your Style'}
           </Button>
         </div>
       </div>
