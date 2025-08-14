@@ -154,6 +154,58 @@ function isHFHosted(url: string) {
   return /huggingface\.co\/|router\.huggingface\.co\//.test(url);
 }
 
+const CLOTHING_VOCAB = [
+  "t-shirt","shirt","blouse","sweater","hoodie","cardigan",
+  "jacket","blazer","coat","dress","skirt","jeans","trousers","shorts",
+  "boots","sneakers","heels","loafers",
+  "handbag","tote bag","crossbody bag","backpack",
+  "hat","scarf","belt"
+];
+
+const CATEGORY_MAP: Record<string,"top"|"bottom"|"shoes"|"bag"|"accessory"> = {
+  "t-shirt":"top","shirt":"top","blouse":"top","sweater":"top","hoodie":"top","cardigan":"top",
+  "jacket":"top","blazer":"top","coat":"top","dress":"top",
+  "skirt":"bottom","jeans":"bottom","trousers":"bottom","shorts":"bottom",
+  "boots":"shoes","sneakers":"shoes","heels":"shoes","loafers":"shoes",
+  "handbag":"bag","tote bag":"bag","crossbody bag":"bag","backpack":"bag",
+  "hat":"accessory","scarf":"accessory","belt":"accessory"
+};
+
+async function zeroShotClassify(base64Img: string) {
+  const url = Deno.env.get("CLASSIFY_URL");
+  if (!url) return null;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...buildInferenceHeaders(), "Accept": "application/json" },
+    body: JSON.stringify({ image: base64Img, labels: CLOTHING_VOCAB })
+  });
+  if (!res.ok) return null;
+  // expected: { probs: { "t-shirt":0.91, ... } }
+  const json = await res.json();
+  const entries = Object.entries(json?.probs ?? {}) as Array<[string, number]>;
+  if (!entries.length) return null;
+  const [label, score] = entries.sort((a,b)=>b[1]-a[1])[0];
+  return { label, score };
+}
+
+async function captionAndMatch(base64Img: string) {
+  const url = Deno.env.get("CAPTION_URL");
+  if (!url) return null;
+  const body = isHFHosted(url) ? { inputs: base64Img } : { image: base64Img, format:"base64" };
+  const res = await fetch(url, { method:"POST", headers:{ ...buildInferenceHeaders(), "Accept":"application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) return null;
+  const j = await res.json();
+  const caption = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
+  if (!caption) return null;
+  // simple vocab match
+  let best = { label: "", score: 0 };
+  for (const l of CLOTHING_VOCAB) {
+    const hit = caption.toLowerCase().includes(l);
+    if (hit) { best = { label: l, score: 0.60 }; break; } // assign a default confidence
+  }
+  return best.label ? best : null;
+}
+
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -210,8 +262,6 @@ Deno.serve(async (req) => {
     const boxes = Array.isArray(detectData?.boxes) ? detectData.boxes : [];
     if (boxes.length === 0) throw new Error("No objects detected in image");
     const bbox = boxes[0];
-    const category = detectData.category || "clothing";
-    const subcategory = detectData.subcategory || "item";
 
     // STEP 2: SEGMENT (optional)
     let maskBase64 = null;
@@ -283,6 +333,31 @@ Deno.serve(async (req) => {
     console.log(`[COLOR] Extracting dominant color from crop...`);
     const { colorName, colorHex } = await extractDominantColor(cropBase64);
     console.log(`[COLOR] Detected: ${colorName} (${colorHex})`);
+    
+    // Get current item to check for existing category/subcategory
+    const { data: currentItem, error: itemErr } = await supabase
+      .from("items")
+      .select("category, subcategory")
+      .eq("id", itemId)
+      .single();
+    if (itemErr) throw new Error(`Failed to get current item: ${itemErr.message}`);
+    
+    // Auto-classify clothing type only if category/subcategory are null
+    let autoLabel: {label: string, score: number} | null = await zeroShotClassify(base64Image);
+    if (!autoLabel) autoLabel = await captionAndMatch(base64Image);
+
+    let category = detectData.category || currentItem.category;      // keep existing if present
+    let subcategory = detectData.subcategory || currentItem.subcategory;
+
+    if ((!currentItem.category || !currentItem.subcategory) && autoLabel) {
+      const mapped = CATEGORY_MAP[autoLabel.label];
+      if (mapped) {
+        // Only set if null to respect any manual/previous value
+        if (!currentItem.category) category = mapped;
+        if (!currentItem.subcategory) subcategory = autoLabel.label;
+        console.log(`[CLASSIFY] Auto-detected: ${autoLabel.label} -> ${mapped}/${autoLabel.label} (score: ${autoLabel.score})`);
+      }
+    }
     
     // Atomic database updates
     // Use extracted colors instead of placeholders
