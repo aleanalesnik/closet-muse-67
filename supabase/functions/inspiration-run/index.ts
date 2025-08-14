@@ -184,7 +184,7 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
   console.log(`[DETECT] Starting detection...`);
   const detectData = await callInferenceWithRetry(
     DETECT_URL, 
-    { image: base64Image, format: "base64" }, 
+    { inputs: base64Image }, 
     "DETECT", 
     infHeaders
   );
@@ -207,7 +207,7 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
       try {
         const segmentData = await callInferenceWithRetry(
           SEGMENT_URL, 
-          { image: base64Image, bbox, format: "base64" }, 
+          { inputs: { image: base64Image, bbox } }, 
           "SEGMENT", 
           infHeaders
         );
@@ -223,7 +223,7 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
     console.log(`[EMBED] Processing detection ${i + 1}...`);
     const embedData = await callInferenceWithRetry(
       EMBED_URL, 
-      { image: cropBase64, format: "base64" }, 
+      { inputs: cropBase64 }, 
       "EMBED", 
       infHeaders
     );

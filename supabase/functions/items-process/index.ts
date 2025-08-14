@@ -187,7 +187,7 @@ Deno.serve(async (req) => {
     console.log(`[DETECT] Starting detection...`);
     const detectData = await callInferenceWithRetry(
       DETECT_URL, 
-      { image: base64Image, format: "base64" }, 
+      { inputs: base64Image }, 
       "DETECT", 
       infHeaders
     );
@@ -206,7 +206,7 @@ Deno.serve(async (req) => {
       console.log(`[SEGMENT] Starting segmentation...`);
       const segmentData = await callInferenceWithRetry(
         SEGMENT_URL, 
-        { image: base64Image, bbox, format: "base64" }, 
+        { inputs: { image: base64Image, bbox } }, 
         "SEGMENT", 
         infHeaders
       );
@@ -254,7 +254,7 @@ Deno.serve(async (req) => {
     console.log(`[EMBED] Starting embedding...`);
     const embedData = await callInferenceWithRetry(
       EMBED_URL, 
-      { image: cropBase64, format: "base64" }, 
+      { inputs: cropBase64 }, 
       "EMBED", 
       infHeaders
     );
