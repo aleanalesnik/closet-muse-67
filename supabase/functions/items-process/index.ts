@@ -154,6 +154,12 @@ function isHFHosted(url: string) {
   return /huggingface\.co\/|router\.huggingface\.co\//.test(url);
 }
 
+function normalizeSecret(v?: string | null) {
+  const s = (v ?? "").trim().toLowerCase();
+  if (!s || s === "none" || s === "false" || s === "0") return null;
+  return v!.trim();
+}
+
 const CLOTHING_VOCAB = [
   "t-shirt","shirt","blouse","sweater","hoodie","cardigan",
   "jacket","blazer","coat","dress","skirt","jeans","trousers","shorts",
@@ -172,38 +178,44 @@ const CATEGORY_MAP: Record<string,"top"|"bottom"|"shoes"|"bag"|"accessory"> = {
 };
 
 async function zeroShotClassify(base64Img: string) {
-  const url = Deno.env.get("CLASSIFY_URL");
-  if (!url) return null;
-  const res = await fetch(url, {
+  const CLASSIFY_URL = normalizeSecret(Deno.env.get("CLASSIFY_URL"));
+  if (!CLASSIFY_URL) return null; // <- allow missing
+  
+  const res = await fetch(CLASSIFY_URL, {
     method: "POST",
-    headers: { ...buildInferenceHeaders(), "Accept": "application/json" },
+    headers: { ...buildInferenceHeaders(), Accept: "application/json" },
     body: JSON.stringify({ image: base64Img, labels: CLOTHING_VOCAB })
   });
   if (!res.ok) return null;
-  // expected: { probs: { "t-shirt":0.91, ... } }
-  const json = await res.json();
-  const entries = Object.entries(json?.probs ?? {}) as Array<[string, number]>;
+  
+  const j = await res.json();
+  const entries = Object.entries(j?.probs ?? {}) as Array<[string, number]>;
   if (!entries.length) return null;
   const [label, score] = entries.sort((a,b)=>b[1]-a[1])[0];
   return { label, score };
 }
 
 async function captionAndMatch(base64Img: string) {
-  const url = Deno.env.get("CAPTION_URL");
-  if (!url) return null;
-  const body = isHFHosted(url) ? { inputs: base64Img } : { image: base64Img, format:"base64" };
-  const res = await fetch(url, { method:"POST", headers:{ ...buildInferenceHeaders(), "Accept":"application/json" }, body: JSON.stringify(body) });
+  const CAPTION_URL = normalizeSecret(Deno.env.get("CAPTION_URL"));
+  if (!CAPTION_URL) return null;
+  
+  const body = isHFHosted(CAPTION_URL) ? { inputs: base64Img } : { image: base64Img, format: "base64" };
+  const res = await fetch(CAPTION_URL, { 
+    method: "POST", 
+    headers: { ...buildInferenceHeaders(), Accept: "application/json" }, 
+    body: JSON.stringify(body) 
+  });
   if (!res.ok) return null;
+  
   const j = await res.json();
   const caption = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
   if (!caption) return null;
-  // simple vocab match
-  let best = { label: "", score: 0 };
+  
+  const lc = caption.toLowerCase();
   for (const l of CLOTHING_VOCAB) {
-    const hit = caption.toLowerCase().includes(l);
-    if (hit) { best = { label: l, score: 0.60 }; break; } // assign a default confidence
+    if (lc.includes(l)) return { label: l, score: 0.60 };
   }
-  return best.label ? best : null;
+  return null;
 }
 
 // Text embedding fallback using sentence-transformers
@@ -415,18 +427,18 @@ Deno.serve(async (req) => {
     if (itemErr) throw new Error(`Failed to get current item: ${itemErr.message}`);
     
     // Auto-classify clothing type regardless of detection (using crop or whole image)
-    let autoLabel: {label: string, score: number} | null = await zeroShotClassify(cropBase64ForEmbed);
-    if (!autoLabel) autoLabel = await captionAndMatch(cropBase64ForEmbed);
+    let inferred: {label: string, score: number} | null = await zeroShotClassify(cropBase64ForEmbed);
+    if (!inferred) inferred = await captionAndMatch(cropBase64ForEmbed);
 
     let category = null;
     let subcategory = null;
 
-    if (autoLabel) {
-      const mapped = CATEGORY_MAP[autoLabel.label];
+    if (inferred) {
+      const mapped = CATEGORY_MAP[inferred.label];
       if (mapped) {
         category = mapped;
-        subcategory = autoLabel.label;
-        console.log(`[CLASSIFY] Auto-detected: ${autoLabel.label} -> ${mapped}/${autoLabel.label} (score: ${autoLabel.score})`);
+        subcategory = inferred.label;
+        console.log(`[CLASSIFY] Auto-detected: ${inferred.label} -> ${mapped}/${inferred.label} (score: ${inferred.score})`);
       }
     }
     
