@@ -104,6 +104,7 @@ export type Database = {
       }
       items: {
         Row: {
+          attributes: Json | null
           brand: string | null
           category: string | null
           color_hex: string | null
@@ -120,6 +121,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          attributes?: Json | null
           brand?: string | null
           category?: string | null
           color_hex?: string | null
@@ -136,6 +138,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          attributes?: Json | null
           brand?: string | null
           category?: string | null
           color_hex?: string | null

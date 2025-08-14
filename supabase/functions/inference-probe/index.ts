@@ -10,11 +10,36 @@ function getServiceClient() {
 }
 
 function buildInferenceHeaders() {
-  const token = Deno.env.get("INFERENCE_API_TOKEN");
-  const name = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
-  const prefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
-  if (!token) throw new Error("Missing INFERENCE_API_TOKEN");
-  return { [name]: prefix ? `${prefix} ${token}` : token, "Content-Type": "application/json" };
+  const authHeader = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
+  const authPrefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
+  const apiToken = Deno.env.get("INFERENCE_API_TOKEN");
+  
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+  
+  if (apiToken) {
+    headers[authHeader] = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+  }
+  
+  return headers;
+}
+
+function buildFashionHeaders() {
+  const authHeader = Deno.env.get("FASHION_AUTH_HEADER") || "x-api-key";
+  const authPrefix = Deno.env.get("FASHION_AUTH_PREFIX") || "";
+  const apiToken = Deno.env.get("FASHION_API_TOKEN");
+  
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+  
+  if (apiToken) {
+    headers[authHeader] = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+  }
+  
+  return headers;
 }
 
 async function probeEndpoint(url: string, name: string, headers: Record<string, string>) {
@@ -69,33 +94,38 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
 
   try {
-    const DETECT_URL = Deno.env.get("DETECT_URL");
-    const SEGMENT_URL = Deno.env.get("SEGMENT_URL");
-    const EMBED_URL = Deno.env.get("EMBED_URL");
-    const CAPTION_URL = Deno.env.get("CAPTION_URL");
-    const CLASSIFY_URL = Deno.env.get("CLASSIFY_URL");
-    
-    console.log(`[PROBE] URLs configured:`, {
-      DETECT_URL: !!DETECT_URL,
-      SEGMENT_URL: !!SEGMENT_URL, 
-      EMBED_URL: !!EMBED_URL,
-      CAPTION_URL: !!CAPTION_URL,
-      CLASSIFY_URL: !!CLASSIFY_URL
-    });
+    // Get the configured endpoints from environment variables
+    const endpoints = {
+      DETECT: Deno.env.get("DETECT_URL"),
+      SEGMENT: Deno.env.get("SEGMENT_URL"), 
+      EMBED: Deno.env.get("EMBED_URL"),
+      CAPTION: Deno.env.get("CAPTION_URL"),
+      CLASSIFY: Deno.env.get("CLASSIFY_URL"),
+      FASHION_SEG: Deno.env.get("FASHION_SEG_URL")
+    };
 
-    const infHeaders = buildInferenceHeaders();
+    const headers = buildInferenceHeaders();
+    const fashionHeaders = buildFashionHeaders();
+    
+    console.log(`[PROBE] URLs configured:`, Object.fromEntries(
+      Object.entries(endpoints).map(([key, value]) => [key, !!value])
+    ));
+
     console.log(`[PROBE] Starting endpoint health checks...`);
 
-    // Probe all configured endpoints in parallel
-    const probes: Promise<any>[] = [];
-    
-    if (DETECT_URL) probes.push(probeEndpoint(DETECT_URL, "DETECT", infHeaders));
-    if (EMBED_URL) probes.push(probeEndpoint(EMBED_URL, "EMBED", infHeaders));
-    if (SEGMENT_URL) probes.push(probeEndpoint(SEGMENT_URL, "SEGMENT", infHeaders));
-    if (CAPTION_URL) probes.push(probeEndpoint(CAPTION_URL, "CAPTION", infHeaders));
-    if (CLASSIFY_URL) probes.push(probeEndpoint(CLASSIFY_URL, "CLASSIFY", infHeaders));
+    // Probe all configured endpoints concurrently
+    const probePromises = Object.entries(endpoints)
+      .filter(([_, url]) => url) // Only probe configured endpoints
+      .map(async ([name, url]) => {
+        const endpointHeaders = name === 'FASHION_SEG' ? fashionHeaders : headers;
+        const result = await probeEndpoint(url!, name, endpointHeaders);
+        return [name, result];
+      });
 
-    if (probes.length === 0) {
+    const probeResults = await Promise.all(probePromises);
+    const results = Object.fromEntries(probeResults);
+
+    if (probePromises.length === 0) {
       return new Response(JSON.stringify({ 
         ok: false, 
         error: "No inference endpoints configured",
@@ -106,26 +136,20 @@ Deno.serve(async (req) => {
       });
     }
 
-    const results = await Promise.all(probes);
-    
-    // Calculate overall status
-    const allOk = results.every(r => r.ok);
-    const hasErrors = results.some(r => !r.ok);
-    
-    console.log(`[PROBE] Complete - ${results.length} endpoints checked, ${results.filter(r => r.ok).length} healthy`);
+    // Check if all probed endpoints are healthy
+    const probedEndpoints = Object.values(results);
+    const allHealthy = probedEndpoints.length > 0 && probedEndpoints.every((r: any) => r.ok);
+    const responseStatus = probedEndpoints.length === 0 ? 404 : (allHealthy ? 200 : 207);
+
+    console.log(`[PROBE] Complete - ${probedEndpoints.length} endpoints checked, ${probedEndpoints.filter((r: any) => r.ok).length} healthy`);
     
     return new Response(JSON.stringify({
-      ok: allOk,
+      status: allHealthy ? "healthy" : "degraded",
       timestamp: new Date().toISOString(),
-      summary: {
-        total: results.length,
-        healthy: results.filter(r => r.ok).length,
-        failed: results.filter(r => !r.ok).length
-      },
       endpoints: results
     }), {
-      headers: { ...cors, "Content-Type": "application/json" },
-      status: hasErrors ? 207 : 200 // 207 Multi-Status for mixed results
+      headers: { ...cors, 'Content-Type': 'application/json' },
+      status: responseStatus
     });
     
   } catch (error) {

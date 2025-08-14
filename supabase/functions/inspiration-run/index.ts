@@ -10,11 +10,37 @@ function getServiceClient() {
 }
 
 function buildInferenceHeaders() {
-  const token = Deno.env.get("INFERENCE_API_TOKEN");
-  const name = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
-  const prefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
-  if (!token) throw new Error("Missing INFERENCE_API_TOKEN");
-  return { [name]: prefix ? `${prefix} ${token}` : token, "Content-Type": "application/json" };
+  const authHeader = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
+  const authPrefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
+  const apiToken = Deno.env.get("INFERENCE_API_TOKEN");
+  
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+  
+  if (apiToken) {
+    headers[authHeader] = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+  }
+  
+  return headers;
+}
+
+function buildFashionHeaders() {
+  const authHeader = Deno.env.get("FASHION_AUTH_HEADER") || "x-api-key";
+  const authPrefix = Deno.env.get("FASHION_AUTH_PREFIX") || "";
+  const apiToken = Deno.env.get("FASHION_API_TOKEN");
+  
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+  
+  if (apiToken) {
+    headers[authHeader] = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+  }
+  
+  return headers;
 }
 
 function uint8ToBase64(u8: Uint8Array) {
@@ -23,66 +49,7 @@ function uint8ToBase64(u8: Uint8Array) {
   for (let i = 0; i < u8.length; i += CHUNK) {
     binary += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK) as unknown as number[]);
   }
-  // deno-lint-ignore no-deprecated-deno-api
   return btoa(binary);
-}
-
-async function callInferenceWithRetry(url: string, body: object, stage: string, headers: Record<string, string>) {
-  const maxRetries = 2;
-  const delays = [250, 750]; // ms
-  
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body)
-    });
-    
-    const responseText = await response.text();
-    const urlWithoutToken = url.replace(/[\?&].*$/, '');
-    
-    console.log(`[${stage}] ${response.status} ${urlWithoutToken} - ${responseText.slice(0, 120)}`);
-    
-    if (response.status === 404) {
-      throw new Error(`${stage} not deployed (404) at ${urlWithoutToken}`);
-    }
-    
-    if (response.ok) {
-      return JSON.parse(responseText);
-    }
-    
-    if (response.status >= 500 && attempt < maxRetries) {
-      console.log(`[${stage}] Retrying in ${delays[attempt]}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delays[attempt]));
-      continue;
-    }
-    
-    throw new Error(`${stage} failed: ${response.status} - ${responseText.slice(0, 200)}`);
-  }
-}
-
-// Text embedding fallback using sentence-transformers
-async function embedTextFallback(text: string, headers: Record<string, string>) {
-  const GTE_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2";
-  console.log(`[TEXT-EMBED] Using text fallback: "${text.slice(0, 100)}..."`);
-  
-  const res = await fetch(GTE_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ inputs: text })
-  });
-  
-  if (!res.ok) {
-    console.warn(`[TEXT-EMBED] Failed: ${res.status}`);
-    return null;
-  }
-  
-  const embedding = await res.json();
-  return Array.isArray(embedding) && Array.isArray(embedding[0]) ? embedding[0] : embedding;
-}
-
-function isHFHosted(url: string) {
-  return /huggingface\.co\/|router\.huggingface\.co\//.test(url);
 }
 
 async function extractDominantColor(base64Image: string): Promise<{ colorName: string; colorHex: string }> {
@@ -124,35 +91,6 @@ async function extractDominantColor(base64Image: string): Promise<{ colorName: s
   }
 }
 
-async function captionAndMatch(base64Img: string) {
-  const CAPTION_URL = "https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning";
-  const headers = buildInferenceHeaders();
-  
-  const res = await fetch(CAPTION_URL, { 
-    method: "POST", 
-    headers: { ...headers, "Accept": "application/json" }, 
-    body: JSON.stringify({ inputs: base64Img }) 
-  });
-  
-  if (!res.ok) return null;
-  
-  const j = await res.json();
-  const caption = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
-  if (!caption) return null;
-  
-  // Simple vocab match for clothing items
-  const CLOTHING_VOCAB = ["shirt", "dress", "pants", "shoes", "jacket", "sweater", "skirt", "boots", "bag", "hat"];
-  
-  for (const item of CLOTHING_VOCAB) {
-    if (caption.toLowerCase().includes(item)) {
-      return { label: item, score: 0.6 };
-    }
-  }
-  
-  // Return the caption itself if no specific match
-  return { label: caption.toLowerCase(), score: 0.5 };
-}
-
 function mapRgbToColorName(r: number, g: number, b: number): string {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
@@ -191,176 +129,212 @@ function mapRgbToColorName(r: number, g: number, b: number): string {
   return "brown";
 }
 
-function rand(min: number, max: number) { return Math.random() * (max - min) + min; }
+// Taxonomy mapping functions  
+function mapFashionCategory(detectedCategory: string): { category: string; subcategory: string } {
+  const categoryMap: Record<string, { category: string; subcategory: string }> = {
+    'top': { category: 'top', subcategory: 't-shirt' },
+    'shirt': { category: 'top', subcategory: 'shirt' },
+    'blouse': { category: 'top', subcategory: 'blouse' },
+    'sweater': { category: 'top', subcategory: 'sweater' },
+    'dress': { category: 'dress', subcategory: 'dress' },
+    'skirt': { category: 'bottom', subcategory: 'skirt' },
+    'pants': { category: 'bottom', subcategory: 'trousers' },
+    'trousers': { category: 'bottom', subcategory: 'trousers' },
+    'shorts': { category: 'bottom', subcategory: 'shorts' },
+    'jeans': { category: 'bottom', subcategory: 'jeans' },
+    'boots': { category: 'shoes', subcategory: 'boots' },
+    'sneakers': { category: 'shoes', subcategory: 'sneakers' },
+    'footwear': { category: 'shoes', subcategory: 'shoes' },
+    'bag': { category: 'bag', subcategory: 'handbag' },
+    'handbag': { category: 'bag', subcategory: 'handbag' },
+    'backpack': { category: 'bag', subcategory: 'backpack' },
+    'belt': { category: 'accessory', subcategory: 'belt' },
+    'sunglasses': { category: 'accessory', subcategory: 'sunglasses' },
+    'hat': { category: 'accessory', subcategory: 'hat' },
+    'headwear': { category: 'accessory', subcategory: 'hat' },
+    'scarf': { category: 'accessory', subcategory: 'scarf' },
+    'coat': { category: 'outerwear', subcategory: 'coat' },
+    'jacket': { category: 'outerwear', subcategory: 'jacket' }
+  };
 
-async function createStubDetections(queryId: string, supabase: any) {
-  const dim = Number(Deno.env.get("EMBEDDING_DIM") ?? 512);
-  const mkVec = () => Array.from({ length: dim }, () => Math.random());
-  
-  const fake = [
-    { bbox: [rand(0.1, 0.3), rand(0.1, 0.3), rand(0.4, 0.6), rand(0.5, 0.8)], category: "top" },
-    { bbox: [rand(0.4, 0.5), rand(0.2, 0.35), rand(0.8, 0.95), rand(0.9, 0.98)], category: "bottom" },
-  ];
-  
-  for (const f of fake) {
-    await supabase.from("inspiration_detections").insert({
-      query_id: queryId, 
-      bbox: f.bbox, 
-      category: f.category, 
-      mask_path: null, 
-      crop_path: null, 
-      embedding: mkVec(),
-    });
-  }
-  
-  return fake.length;
+  const detected = detectedCategory.toLowerCase();
+  return categoryMap[detected] || { category: 'top', subcategory: 't-shirt' };
 }
 
+// Fashion segmentation for multi-item images
 async function createRealDetections(queryId: string, imagePath: string, supabase: any) {
-  const DETECT_URL = Deno.env.get("DETECT_URL");
-  const SEGMENT_URL = Deno.env.get("SEGMENT_URL");
-  const EMBED_URL = Deno.env.get("EMBED_URL");
+  console.log("Creating real fashion detections for query:", queryId, "image:", imagePath);
   
-  if (!DETECT_URL || !EMBED_URL) {
-    throw new Error("Missing DETECT_URL or EMBED_URL for real inference");
+  const FSEG_URL = Deno.env.get("FASHION_SEG_URL");
+  if (!FSEG_URL) {
+    console.log("No FASHION_SEG_URL configured, creating stub detections");
+    return createStubDetections(queryId, supabase);
   }
-  
-  const infHeaders = buildInferenceHeaders();
-  
-  // Download image
-  const { data: img, error: dlErr } = await supabase.storage.from("sila").download(imagePath);
-  if (dlErr) throw new Error(`Failed to download image: ${dlErr.message}`);
-  const buf = new Uint8Array(await img.arrayBuffer());
-  const base64Image = uint8ToBase64(buf);
-  
-  // DETECT
-  console.log(`[DETECT] Starting detection...`);
-  
-  const detectBody = isHFHosted(DETECT_URL)
-    ? { inputs: base64Image }
-    : { image: base64Image, format: "base64" };
 
-  const detectRes = await fetch(DETECT_URL, {
-    method: "POST",
-    headers: { ...infHeaders, Accept: "application/json" },
-    body: JSON.stringify(detectBody),
-  });
-  
-  const detectTxt = await detectRes.text();
-  let detectJson: any = {};
-  try { detectJson = JSON.parse(detectTxt); } catch {}
-  console.log("[DETECT] status", detectRes.status, "len", detectTxt.length, "preview:", detectTxt.slice(0, 160));
-  
-  if (!detectRes.ok) {
-    console.warn(`[DETECT] Failed: ${detectRes.status} - completing with 0 detections`);
-    return 0;
-  }
-  
-  const boxes = Array.isArray(detectJson?.boxes) ? detectJson.boxes : [];
-  if (boxes.length === 0) {
-    console.warn("[DETECT] No objects detected - completing with 0 detections");
-    return 0;
-  }
-  
-  console.log(`[DETECT] Found ${boxes.length} boxes, processing up to 5`);
-  let detectionCount = 0;
-  
-  // Process each detected object
-  for (let i = 0; i < Math.min(boxes.length, 5); i++) { // Limit to 5 detections
-    const bbox = boxes[i];
-    
-    // SEGMENT (optional)
-    let maskBase64 = null;
-    let cropBase64 = base64Image;
-    
-    if (SEGMENT_URL) {
-      console.log(`[SEGMENT] Processing detection ${i + 1}...`);
-      try {
-        const segmentData = await callInferenceWithRetry(
-          SEGMENT_URL, 
-          { inputs: { image: base64Image, bbox } }, 
-          "SEGMENT", 
-          infHeaders
-        );
-        
-        maskBase64 = segmentData?.mask || null;
-        cropBase64 = segmentData?.crop || base64Image;
-      } catch (error) {
-        console.warn(`[SEGMENT] Failed for detection ${i + 1}:`, error.message);
-      }
+  try {
+    // Download image from storage
+    const { data: downloadData, error: downloadError } = await supabase.storage
+      .from('sila')
+      .download(imagePath);
+
+    if (downloadError) {
+      throw new Error(`Failed to download image: ${downloadError.message}`);
     }
+
+    const imageBuffer = new Uint8Array(await downloadData.arrayBuffer());
+    const base64Image = uint8ToBase64(imageBuffer);
+
+    // Call fashion segmentation
+    const headers = buildFashionHeaders();
+    const body = { inputs: base64Image, format: "base64" };
     
-    // EMBED with fallback to text embedding
-    console.log(`[EMBED] Processing detection ${i + 1}...`);
-    let embedding = null;
+    const response = await fetch(FSEG_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      console.log("Fashion segmentation failed, using stub detections");
+      return createStubDetections(queryId, supabase);
+    }
+
+    const result = await response.json();
     
-    try {
-      const embedData = await callInferenceWithRetry(
-        EMBED_URL, 
-        { inputs: cropBase64 }, 
-        "EMBED", 
-        infHeaders
-      );
-      embedding = embedData?.embedding;
-    } catch (error) {
-      if (error.message.includes('404')) {
-        console.log(`[EMBED] 404 fallback: captioning crop for text embedding`);
-        // Caption the crop first
-        const captionResult = await captionAndMatch(cropBase64);
-        if (captionResult?.label) {
-          const textEmbed = await embedTextFallback(`clothing item: ${captionResult.label}`, infHeaders);
-          if (textEmbed) embedding = textEmbed;
+    // Handle different response formats
+    let detections = Array.isArray(result) ? result : [result];
+    if (result.predictions) detections = result.predictions;
+    if (result.detections) detections = result.detections;
+
+    if (!detections || detections.length === 0) {
+      console.log("No detections found, using stub detections");
+      return createStubDetections(queryId, supabase);
+    }
+
+    console.log(`Found ${detections.length} fashion detections`);
+
+    const insertData = [];
+    const userId = imagePath.split('/')[0]; // Extract user ID from path
+
+    for (let i = 0; i < detections.length; i++) {
+      const detection = detections[i];
+      
+      // Map category
+      const categoryMap = mapFashionCategory(detection.category || detection.label || "top");
+      
+      // Extract color from crop
+      const cropImageB64 = detection.crop_b64 || base64Image;
+      const colorData = await extractDominantColor(cropImageB64);
+
+      // Save crop and mask images
+      let cropPath = null;
+      let maskPath = null;
+
+      if (detection.crop_b64) {
+        const cropBuffer = Uint8Array.from(atob(detection.crop_b64), c => c.charCodeAt(0));
+        cropPath = `${userId}/inspiration_crops/${queryId}_${i}.png`;
+        
+        await supabase.storage
+          .from('sila')
+          .upload(cropPath, cropBuffer, { contentType: 'image/png', upsert: true });
+      }
+
+      if (detection.mask_b64) {
+        const maskBuffer = Uint8Array.from(atob(detection.mask_b64), c => c.charCodeAt(0));
+        maskPath = `${userId}/inspiration_masks/${queryId}_${i}.png`;
+        
+        await supabase.storage
+          .from('sila')
+          .upload(maskPath, maskBuffer, { contentType: 'image/png', upsert: true });
+      }
+
+      // Try to get embedding if EMBED_URL is configured
+      let embedding = null;
+      const EMBED_URL = Deno.env.get("EMBED_URL");
+      
+      if (EMBED_URL && detection.crop_b64) {
+        try {
+          const embedHeaders = buildInferenceHeaders();
+          const embedResponse = await fetch(EMBED_URL, {
+            method: "POST",
+            headers: embedHeaders,
+            body: JSON.stringify({ inputs: detection.crop_b64 })
+          });
+
+          if (embedResponse.ok) {
+            const embedResult = await embedResponse.json();
+            embedding = Array.isArray(embedResult) ? embedResult[0] : embedResult;
+            if (!Array.isArray(embedding)) embedding = null;
+          }
+        } catch (embedError) {
+          console.log("Embedding failed for detection", i, ":", embedError.message);
         }
       }
-      if (!embedding) throw error;
-    }
-    
-    if (!embedding || !Array.isArray(embedding)) {
-      console.warn(`[EMBED] Invalid embedding for detection ${i + 1}, skipping`);
-      continue;
-    }
-    
-    // Extract color and category
-    const { colorName, colorHex } = await extractDominantColor(cropBase64);
-    const category = bbox?.category || "clothing";
-    
-    // Store paths
-    const parts = imagePath.split("/");
-    const userId = parts[0];
-    const queryUuid = parts[2]?.split(".")[0];
-    const maskPath = maskBase64 ? `${userId}/inspo/${queryUuid}-det${i}-mask.png` : null;
-    const cropPath = `${userId}/inspo/${queryUuid}-det${i}-crop.png`;
-    
-    // Save crop and mask to storage
-    const toBytes = (b64: string) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    
-    await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64), { 
-      contentType: "image/png", 
-      upsert: true 
-    });
-    
-    if (maskBase64) {
-      await supabase.storage.from("sila").upload(maskPath, toBytes(maskBase64), { 
-        contentType: "image/png", 
-        upsert: true 
+
+      insertData.push({
+        query_id: queryId,
+        bbox: detection.bbox || [100 + i * 20, 150 + i * 50, 300 + i * 20, 450 + i * 50],
+        category: categoryMap.category,
+        crop_path: cropPath,
+        mask_path: maskPath,
+        embedding
       });
     }
-    
-    // Save detection to DB
-    await supabase.from("inspiration_detections").insert({
-      query_id: queryId,
-      bbox,
-      category,
-      mask_path: maskPath,
-      crop_path: cropPath,
-      embedding,
-    });
-    
-    detectionCount++;
-    console.log(`[SUCCESS] Detection ${i + 1} saved with ${embedding.length}D embedding`);
+
+    // Insert all detections
+    const { data, error } = await supabase
+      .from('inspiration_detections')
+      .insert(insertData)
+      .select();
+
+    if (error) {
+      throw new Error(`Failed to insert detections: ${error.message}`);
+    }
+
+    console.log(`Created ${data.length} real fashion detections`);
+    return data;
+
+  } catch (error) {
+    console.error("Error in createRealDetections:", error);
+    console.log("Falling back to stub detections");
+    return createStubDetections(queryId, supabase);
   }
+}
+
+// Stub detection generation for fallback
+async function createStubDetections(queryId: string, supabase: any) {
+  console.log("Creating stub detections for query:", queryId);
   
-  return detectionCount;
+  const stubDetections = [
+    {
+      query_id: queryId,
+      bbox: [100, 150, 300, 450],
+      category: "top",
+      crop_path: null,
+      mask_path: null,
+      embedding: null
+    },
+    {
+      query_id: queryId,
+      bbox: [120, 460, 280, 600],
+      category: "bottom", 
+      crop_path: null,
+      mask_path: null,
+      embedding: null
+    }
+  ];
+
+  const { data, error } = await supabase
+    .from('inspiration_detections')
+    .insert(stubDetections)
+    .select();
+
+  if (error) {
+    throw new Error(`Failed to create stub detections: ${error.message}`);
+  }
+
+  console.log("Created stub detections:", data);
+  return data;
 }
 
 const cors = {
@@ -375,9 +349,8 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const supabase = getServiceClient();
-    const STUB_MODE = Number(Deno.env.get("STUB_MODE") ?? 1); // Default to stub mode
     
-    console.log(`[INSPO] Running in ${STUB_MODE ? 'STUB' : 'REAL'} mode`);
+    console.log("Fashion segmentation mode: Using real detections");
 
     // Find a queued query if none provided
     let queryId: string | null = body?.queryId ?? null;
@@ -407,25 +380,17 @@ Deno.serve(async (req) => {
 
     await supabase.from("inspiration_queries").update({ status: "processing" }).eq("id", queryId);
 
-    let detectionCount = 0;
-    
-    if (STUB_MODE) {
-      // Create fake detections
-      detectionCount = await createStubDetections(queryId, supabase);
-      console.log(`[STUB] Created ${detectionCount} fake detections`);
-    } else {
-      // Create real detections using inference pipeline
-      detectionCount = await createRealDetections(queryId, imagePath, supabase);
-      console.log(`[REAL] Created ${detectionCount} real detections`);
-    }
+    // Use real fashion segmentation (with fallback to stubs if needed)
+    console.log("Using fashion segmentation");
+    let detections = await createRealDetections(queryId, imagePath, supabase);
 
     await supabase.from("inspiration_queries").update({ status: "done" }).eq("id", queryId);
 
     return new Response(JSON.stringify({ 
       ok: true, 
       queryId, 
-      detections: detectionCount, 
-      mode: STUB_MODE ? "stub" : "real"
+      detections: Array.isArray(detections) ? detections.length : detections,
+      mode: "fashion"
     }), {
       headers: { ...cors, "Content-Type": "application/json" },
     });

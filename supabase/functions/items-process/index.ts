@@ -9,30 +9,46 @@ function getServiceClient() {
 }
 
 function buildInferenceHeaders() {
-  const token = Deno.env.get("INFERENCE_API_TOKEN");
-  const name = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
-  const prefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
-  if (!token) throw new Error("Missing INFERENCE_API_TOKEN");
-  return { [name]: prefix ? `${prefix} ${token}` : token, "Content-Type": "application/json" };
+  const authHeader = Deno.env.get("INFERENCE_AUTH_HEADER") || "Authorization";
+  const authPrefix = Deno.env.get("INFERENCE_AUTH_PREFIX") || "Bearer";
+  const apiToken = Deno.env.get("INFERENCE_API_TOKEN");
+  
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+  
+  if (apiToken) {
+    headers[authHeader] = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+  }
+  
+  return headers;
 }
 
-function uint8ToBase64(u8: Uint8Array) {
+function buildFashionHeaders() {
+  const authHeader = Deno.env.get("FASHION_AUTH_HEADER") || "x-api-key";
+  const authPrefix = Deno.env.get("FASHION_AUTH_PREFIX") || "";
+  const apiToken = Deno.env.get("FASHION_API_TOKEN");
+  
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+  
+  if (apiToken) {
+    headers[authHeader] = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
+  }
+  
+  return headers;
+}
+
+function uint8ToBase64(u8: Uint8Array): string {
   const CHUNK = 0x8000;
   let binary = "";
   for (let i = 0; i < u8.length; i += CHUNK) {
     binary += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK) as unknown as number[]);
   }
   return btoa(binary);
-}
-
-function isHFHosted(url: string) {
-  return /huggingface\.co\/|router\.huggingface\.co\//.test(url);
-}
-
-function normalizeSecret(v?: string | null) {
-  const s = (v ?? "").trim().toLowerCase();
-  if (!s || s === "none" || s === "false" || s === "0") return null;
-  return v!.trim();
 }
 
 // Color detection constants and helpers
@@ -99,464 +115,408 @@ async function extractDominantColor(b64: string) {
   }
 }
 
-// Garment identification vocabulary and mappings
-const VOCAB = [
-  "t-shirt","shirt","blouse","sweater","hoodie","cardigan",
-  "jacket","blazer","coat","dress","skirt","jeans","trousers","pants","shorts",
-  "boots","sneakers","trainers","heels","loafers","sandals",
-  "handbag","tote bag","shoulder bag","crossbody bag","backpack",
-  "belt","hat","cap","beanie","scarf","sunglasses","wallet"
-];
+// Taxonomy mapping functions
+function mapFashionCategory(detectedCategory: string): { category: string; subcategory: string } {
+  const categoryMap: Record<string, { category: string; subcategory: string }> = {
+    // Fashionpedia/ModaNet mappings
+    'top': { category: 'top', subcategory: 't-shirt' },
+    'shirt': { category: 'top', subcategory: 'shirt' },
+    'blouse': { category: 'top', subcategory: 'blouse' },
+    'sweater': { category: 'top', subcategory: 'sweater' },
+    'dress': { category: 'dress', subcategory: 'dress' },
+    'skirt': { category: 'bottom', subcategory: 'skirt' },
+    'pants': { category: 'bottom', subcategory: 'trousers' },
+    'trousers': { category: 'bottom', subcategory: 'trousers' },
+    'shorts': { category: 'bottom', subcategory: 'shorts' },
+    'jeans': { category: 'bottom', subcategory: 'jeans' },
+    'boots': { category: 'shoes', subcategory: 'boots' },
+    'sneakers': { category: 'shoes', subcategory: 'sneakers' },
+    'footwear': { category: 'shoes', subcategory: 'shoes' },
+    'bag': { category: 'bag', subcategory: 'handbag' },
+    'handbag': { category: 'bag', subcategory: 'handbag' },
+    'backpack': { category: 'bag', subcategory: 'backpack' },
+    'belt': { category: 'accessory', subcategory: 'belt' },
+    'sunglasses': { category: 'accessory', subcategory: 'sunglasses' },
+    'hat': { category: 'accessory', subcategory: 'hat' },
+    'headwear': { category: 'accessory', subcategory: 'hat' },
+    'scarf': { category: 'accessory', subcategory: 'scarf' },
+    'coat': { category: 'outerwear', subcategory: 'coat' },
+    'jacket': { category: 'outerwear', subcategory: 'jacket' }
+  };
 
-const CANON: Record<string,string> = {
-  "tee":"t-shirt","tshirt":"t-shirt","t shirt":"t-shirt",
-  "trainer":"sneakers","trainers":"sneakers","sneaker":"sneakers",
-  "pants":"trousers","denim":"jeans","jean":"jeans",
-  "bag":"handbag","purse":"handbag","cap":"hat","baseball cap":"hat"
-};
-
-const CAT: Record<string,"top"|"bottom"|"shoes"|"bag"|"accessory"> = {
-  "t-shirt":"top","shirt":"top","blouse":"top","sweater":"top","hoodie":"top","cardigan":"top",
-  "jacket":"top","blazer":"top","coat":"top","dress":"top",
-  "skirt":"bottom","jeans":"bottom","trousers":"bottom","pants":"bottom","shorts":"bottom",
-  "boots":"shoes","sneakers":"shoes","heels":"shoes","loafers":"shoes","sandals":"shoes",
-  "handbag":"bag","tote bag":"bag","shoulder bag":"bag","crossbody bag":"bag","backpack":"bag","wallet":"bag",
-  "belt":"accessory","hat":"accessory","cap":"accessory","beanie":"accessory",
-  "scarf":"accessory","sunglasses":"accessory"
-};
+  const detected = detectedCategory.toLowerCase();
+  return categoryMap[detected] || { category: 'top', subcategory: 't-shirt' };
+}
 
 // Caption fallback chain with multiple models
-async function labelFromCaption(b64: string, trace: Array<any>) {
-  const CAPTION_URLS_RAW = Deno.env.get("CAPTION_URLS");
-  const urls = CAPTION_URLS_RAW 
-    ? CAPTION_URLS_RAW.split(",").map(u => u.trim())
-    : [
-        "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base",
-        "https://api-inference.huggingface.co/models/microsoft/git-base", 
-        "https://api-inference.huggingface.co/models/microsoft/git-large-coco",
-        "https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning"
-      ];
-  
-  console.log("[CAPTION] Trying", urls.length, "caption models");
-  const infHeaders = buildInferenceHeaders();
-  
-  for (const url of urls) {
+async function tryCaption(base64Image: string): Promise<{ caption: string; url: string; trace: any[] }> {
+  const captionUrls = (Deno.env.get("CAPTION_URLS") || 
+    "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base," +
+    "https://api-inference.huggingface.co/models/microsoft/git-base," +
+    "https://api-inference.huggingface.co/models/microsoft/git-large-coco"
+  ).split(",").map(url => url.trim());
+
+  const headers = buildInferenceHeaders();
+  const trace: any[] = [];
+
+  for (const url of captionUrls) {
     const startTime = Date.now();
-    console.log("[CAPTION] Trying:", url);
-    
-    // Try JSON base64 format first
+    let status = 0;
+    let mode = "";
+
     try {
-      const jsonBody = { inputs: `data:image/png;base64,${b64}` };
-      const r = await fetch(url, {
+      // Try JSON format first
+      mode = "json";
+      const jsonBody = { inputs: `data:image/png;base64,${base64Image}` };
+      const response = await fetch(url, {
         method: "POST",
-        headers: { ...infHeaders, "Content-Type": "application/json", Accept: "application/json" },
+        headers,
         body: JSON.stringify(jsonBody)
       });
-      
-      const ms = Date.now() - startTime;
-      console.log("[CAPTION] JSON response:", r.status, "in", ms + "ms");
-      
-      if (r.ok) {
-        const j = await r.json().catch(() => ({}));
-        const raw = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
+
+      status = response.status;
+
+      if (response.ok) {
+        const result = await response.json();
+        const caption = Array.isArray(result) && result[0]?.generated_text 
+          ? result[0].generated_text 
+          : result.generated_text || "clothing item";
         
-        trace.push({ step: "CAPTION", url, status: r.status, ms, mode: "json" });
-        
-        if (raw) {
-          console.log("[CAPTION] SUCCESS with JSON:", raw);
-          return parseCaption(raw);
-        }
-      } else if (r.status === 415) {
-        // Try raw bytes format
-        console.log("[CAPTION] JSON 415, trying raw bytes...");
-        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-        
-        const r2 = await fetch(url, {
-          method: "POST", 
-          headers: { ...infHeaders, "Content-Type": "image/png", Accept: "application/json" },
-          body: bytes
-        });
-        
-        const ms2 = Date.now() - startTime;
-        console.log("[CAPTION] Bytes response:", r2.status, "in", ms2 + "ms");
-        
-        if (r2.ok) {
-          const j2 = await r2.json().catch(() => ({}));
-          const raw2 = Array.isArray(j2) ? (j2[0]?.generated_text ?? j2[0]?.summary_text) : (j2.generated_text ?? j2.caption ?? "");
-          
-          trace.push({ step: "CAPTION", url, status: r2.status, ms: ms2, mode: "bytes" });
-          
-          if (raw2) {
-            console.log("[CAPTION] SUCCESS with bytes:", raw2);
-            return parseCaption(raw2);
-          }
-        } else {
-          trace.push({ step: "CAPTION", url, status: r2.status, ms: ms2, mode: "bytes", error: `HTTP ${r2.status}` });
-        }
-      } else {
-        trace.push({ step: "CAPTION", url, status: r.status, ms, mode: "json", error: `HTTP ${r.status}` });
+        trace.push({ step: "CAPTION", url, status, ms: Date.now() - startTime, mode });
+        return { caption, url, trace };
       }
+
+      // If 415, try raw bytes
+      if (response.status === 415) {
+        mode = "bytes";
+        const bytesResponse = await fetch(url, {
+          method: "POST",
+          headers: { ...headers, "Content-Type": "image/png" },
+          body: Uint8Array.from(atob(base64Image), c => c.charCodeAt(0))
+        });
+
+        status = bytesResponse.status;
+
+        if (bytesResponse.ok) {
+          const result = await bytesResponse.json();
+          const caption = Array.isArray(result) && result[0]?.generated_text 
+            ? result[0].generated_text 
+            : result.generated_text || "clothing item";
+          
+          trace.push({ step: "CAPTION", url, status, ms: Date.now() - startTime, mode });
+          return { caption, url, trace };
+        }
+      }
+
+      trace.push({ step: "CAPTION", url, status, ms: Date.now() - startTime, mode });
     } catch (error) {
-      const ms = Date.now() - startTime;
-      console.warn("[CAPTION] Error with", url + ":", error.message);
-      trace.push({ step: "CAPTION", url, status: 0, ms, mode: "json", error: error.message });
+      trace.push({ step: "CAPTION", url, status: 0, ms: Date.now() - startTime, mode, error: error.message });
     }
   }
-  
-  console.log("[CAPTION] All models failed");
-  return {};
+
+  // All failed
+  return { caption: "clothing item", url: "fallback", trace };
 }
 
-// Parse caption text and extract labels
-function parseCaption(raw: string) {
-  console.log("[CAPTION] Raw caption:", raw);
-  const lc = ` ${raw.toLowerCase()} `;
-  console.log("[CAPTION] Lowercased with spaces:", lc);
-
-  // exact vocab hit
-  for (const v of VOCAB) {
-    if (lc.includes(` ${v} `)) {
-      console.log("[CAPTION] Found exact vocab match:", v);
-      return { sub: v, cat: CAT[v], caption: raw, conf: 0.7 };
-    }
+// Fashion segmentation function
+async function tryFashionSegmentation(base64Image: string): Promise<{
+  success: boolean;
+  detection?: any;
+  trace: any[];
+  crop?: string;
+  mask?: string;
+}> {
+  const FSEG_URL = Deno.env.get("FASHION_SEG_URL");
+  if (!FSEG_URL) {
+    return { success: false, trace: [{ step: "FASHION_SEG", status: "not_configured" }] };
   }
 
-  // synonyms → canonical
-  const tokens = lc.replace(/[^a-z\s-]/g," ").split(/\s+/).filter(Boolean);
-  console.log("[CAPTION] Tokens for synonym matching:", tokens.slice(0, 10));
-  for (let i=0;i<tokens.length;i++){
-    const w1 = tokens[i];
-    const w2 = i+1 < tokens.length ? `${w1} ${tokens[i+1]}` : w1;
-    const cand = CANON[w2] || CANON[w1];
-    if (cand) {
-      console.log("[CAPTION] Found synonym match:", w2 || w1, "->", cand);
-      return { sub: cand, cat: CAT[cand], caption: raw, conf: 0.6 };
-    }
-  }
-  console.log("[CAPTION] No matches found, returning caption only");
-  return { caption: raw };
-}
+  const headers = buildFashionHeaders();
+  const trace: any[] = [];
+  const startTime = Date.now();
 
-// Text embedding fallback
-async function embedTextFallback(text: string, headers: Record<string, string>) {
-  const GTE_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2";
-  console.log(`[TEXT-EMBED] Using text fallback: "${text.slice(0, 100)}..."`);
-  
   try {
-    const res = await fetch(GTE_URL, {
+    const body = { inputs: base64Image, format: "base64" };
+    const response = await fetch(FSEG_URL, {
       method: "POST",
       headers,
-      body: JSON.stringify({ inputs: text })
+      body: JSON.stringify(body)
     });
-    
-    if (!res.ok) {
-      console.warn(`[TEXT-EMBED] Failed: ${res.status}`);
-      return null;
+
+    const status = response.status;
+    const ms = Date.now() - startTime;
+
+    if (response.ok) {
+      const result = await response.json();
+      
+      // Handle different response formats
+      let detections = Array.isArray(result) ? result : [result];
+      if (result.predictions) detections = result.predictions;
+      if (result.detections) detections = result.detections;
+
+      // Pick the largest/most confident detection
+      const bestDetection = detections.length > 0 ? detections[0] : null;
+
+      trace.push({ step: "FASHION_SEG", url: FSEG_URL, status, ms, mode: "json", detections: detections.length });
+
+      if (bestDetection) {
+        return {
+          success: true,
+          detection: bestDetection,
+          trace,
+          crop: bestDetection.crop_b64,
+          mask: bestDetection.mask_b64
+        };
+      }
     }
-    
-    const embedding = await res.json();
-    return Array.isArray(embedding) && Array.isArray(embedding[0]) ? embedding[0] : embedding;
+
+    trace.push({ step: "FASHION_SEG", url: FSEG_URL, status, ms, mode: "json" });
+    return { success: false, trace };
   } catch (error) {
-    console.warn("[TEXT-EMBED] Error:", error.message);
-    return null;
+    trace.push({ step: "FASHION_SEG", url: FSEG_URL, status: 0, ms: Date.now() - startTime, error: error.message });
+    return { success: false, trace };
   }
 }
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
 
   try {
-    console.log("[DEBUG] Function started - checking secrets...");
-    console.log("[DEBUG] CAPTION_URL raw:", Deno.env.get("CAPTION_URL"));
-    console.log("[DEBUG] INFERENCE_API_TOKEN raw:", Deno.env.get("INFERENCE_API_TOKEN"));
-    
-    const body = await req.json();
-    const { itemId, imagePath, debug } = body;
-    console.log("[DEBUG] Received:", { itemId, imagePath, debug });
-    
-    // Initialize trace for debugging
-    const trace: Array<{step: string, status?: number, ms?: number, error?: string}> = [];
-    
+    const { itemId, imagePath, debug } = await req.json();
+    console.log("items-process called with:", { itemId, imagePath, debug });
+
     if (!itemId || !imagePath) {
-      return new Response(JSON.stringify({ ok: false, error: "itemId and imagePath required" }), {
-        status: 400, headers: { ...cors, "Content-Type": "application/json" },
+      return new Response(JSON.stringify({ 
+        ok: false, 
+        error: "Missing itemId or imagePath" 
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400
       });
     }
 
     const supabase = getServiceClient();
-    const DETECT_URL = Deno.env.get("DETECT_URL");
-    const SEGMENT_URL = Deno.env.get("SEGMENT_URL");
-    const EMBED_URL = Deno.env.get("EMBED_URL");
+    const trace: any[] = [];
     
-    const infHeaders = buildInferenceHeaders();
+    // Download image from storage
+    console.log("Downloading image from storage:", imagePath);
+    const { data: downloadData, error: downloadError } = await supabase.storage
+      .from('sila')
+      .download(imagePath);
 
-    // Download image
-    const { data: img, error: dlErr } = await supabase.storage.from("sila").download(imagePath);
-    if (dlErr) throw new Error(`Failed to download image: ${dlErr.message}`);
-    const buf = new Uint8Array(await img.arrayBuffer());
-    const base64Image = uint8ToBase64(buf);
-    console.log("[DEBUG] Image downloaded and converted to base64");
-
-    // STEP 1: CAPTION FIRST (every time for closet items)
-    console.log(`[CAPTION] Starting caption analysis (first step)...`);
-    const captionStart = Date.now();
-    const { sub, cat, caption } = await labelFromCaption(base64Image, trace);
-    const captionMs = Date.now() - captionStart;
-    
-    if (caption) {
-      console.log(`[CAPTION] SUCCESS: "${caption}" -> subcategory: ${sub || 'none'}, category: ${cat || 'none'} (${captionMs}ms)`);
-    } else {
-      console.log(`[CAPTION] FAILED: No caption returned (${captionMs}ms)`);
-    }
-    
-    // Color detection: first try caption text, then dominant color analysis
-    let colorName: string | null = null;
-    let colorHex: string | null = null;
-    
-    if (caption) {
-      const lc = caption.toLowerCase();
-      for (const k of Object.keys(COLOR_WORDS)) {
-        if (lc.includes(k)) { 
-          colorName = (k === "grey" ? "gray" : k); 
-          colorHex = COLOR_WORDS[k]; 
-          console.log(`[COLOR] Found color word in caption: ${colorName}`);
-          break; 
-        }
-      }
-    }
-    
-    if (!colorName) {
-      console.log(`[COLOR] No color word found, analyzing dominant color...`);
-      const dom = await extractDominantColor(base64Image);
-      colorName = dom.name; 
-      colorHex = dom.hex;
-      console.log(`[COLOR] Dominant color: ${colorName} (${colorHex})`);
-    }
-
-    // STEP 2: DETECT (optional - skipped for closet items)
-    const USE_DETECT = (Deno.env.get("ITEMS_USE_DETECT") ?? "0") !== "0";
-    let cropBase64ForEmbed = base64Image; // default whole image
-    let hadBoxes = false;
-    let bbox = null;
-
-    if (USE_DETECT && DETECT_URL) {
-      console.log(`[DETECT] Starting detection...`);
-      const detectStart = Date.now();
-      
-      try {
-        const detectBody = isHFHosted(DETECT_URL)
-          ? { inputs: base64Image }
-          : { image: base64Image, format: "base64" };
-
-        const detectRes = await fetch(DETECT_URL, {
-          method: "POST",
-          headers: { ...infHeaders, Accept: "application/json" },
-          body: JSON.stringify(detectBody),
-        });
-        
-        const detectMs = Date.now() - detectStart;
-        trace.push({ step: "DETECT", status: detectRes.status, ms: detectMs });
-        
-        if (detectRes.ok) {
-          const detectJson = await detectRes.json().catch(() => ({}));
-          const boxes = Array.isArray(detectJson?.boxes) ? detectJson.boxes : [];
-          if (boxes.length > 0) {
-            hadBoxes = true;
-            const best = boxes.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))[0];
-            bbox = best;
-            console.log(`[DETECT] Found ${boxes.length} boxes, using best with score ${best.score ?? 'N/A'}`);
-          } else {
-            console.warn("[DETECT] 0 boxes — using whole image as crop");
-          }
-        } else {
-          console.warn(`[DETECT] Failed: ${detectRes.status}`);
-        }
-      } catch (error) {
-        const detectMs = Date.now() - detectStart;
-        trace.push({ step: "DETECT", status: 0, ms: detectMs, error: error.message });
-        console.warn("[DETECT] Exception:", error.message);
-      }
-    } else {
-      console.log("[DETECT] Skipped for items (ITEMS_USE_DETECT=0)");
-      trace.push({ step: "DETECT", status: 0, ms: 0, error: "Skipped (ITEMS_USE_DETECT=0)" });
-    }
-
-    // STEP 2: SEGMENT (optional, only if we had a detection)
-    let maskBase64 = null;
-    
-    if (SEGMENT_URL && hadBoxes && bbox) {
-      console.log(`[SEGMENT] Starting segmentation...`);
-      try {
-        const segmentBody = isHFHosted(SEGMENT_URL) 
-          ? { inputs: { image: base64Image, bbox } }
-          : { image: base64Image, bbox, format: "base64" };
-          
-        const segmentRes = await fetch(SEGMENT_URL, {
-          method: "POST",
-          headers: { ...infHeaders, Accept: "application/json" },
-          body: JSON.stringify(segmentBody),
-        });
-        
-        if (segmentRes.ok) {
-          const segmentData = await segmentRes.json();
-          maskBase64 = segmentData?.mask || null;
-          cropBase64ForEmbed = segmentData?.crop || base64Image;
-          
-          if (!segmentData?.crop) {
-            console.log(`[SEGMENT] Warning: No crop returned, using original image`);
-          }
-        } else {
-          console.warn(`[SEGMENT] Failed: ${segmentRes.status}`);
-        }
-      } catch (error) {
-        console.warn(`[SEGMENT] Exception:`, error.message);
-      }
-    } else if (SEGMENT_URL && !hadBoxes) {
-      console.log(`[SEGMENT] Skipped - no detection bbox available`);
-    } else if (!SEGMENT_URL) {
-      console.log(`[SEGMENT] Skipped - SEGMENT_URL not configured`);
-    }
-
-    // Store generated files (crop and optional mask)
-    const imageParts = imagePath.split("/");
-    if (imageParts.length < 3) {
-      throw new Error(`Invalid imagePath format: ${imagePath}. Expected userId/items/uuid.ext`);
-    }
-    
-    const userId = imageParts[0];
-    const itemUuid = imageParts[2]?.split(".")[0];
-    const maskPath = maskBase64 ? `${userId}/items/${itemUuid}-mask.png` : null;
-    const cropPath = `${userId}/items/${itemUuid}-crop.png`;
-
-    // Store files to storage
-    const toBytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    
-    try {
-      // Always save crop (either segmented crop or original image)
-      await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64ForEmbed), { 
-        contentType: "image/png", 
-        upsert: true 
+    if (downloadError) {
+      console.error("Download error:", downloadError);
+      return new Response(JSON.stringify({
+        ok: false,
+        error: `Failed to download image: ${downloadError.message}`
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500
       });
-      
-      // Only save mask if we have one from segmentation
-      if (maskBase64) {
-        await supabase.storage.from("sila").upload(maskPath, toBytes(maskBase64), { 
-          contentType: "image/png", 
-          upsert: true 
-        });
-      }
-    } catch (error) {
-      console.warn("[STORAGE] File upload error:", error.message);
     }
 
-    // STEP 3: EMBED - never crash
-    console.log(`[EMBED] Starting embedding...`);
-    let embedding: number[] | null = null;
-    
-    if (EMBED_URL) {
-      const embedStart = Date.now();
-      try {
-        const body = isHFHosted(EMBED_URL)
-          ? { inputs: cropBase64ForEmbed }
-          : { image: cropBase64ForEmbed, format: "base64" };
+    const imageBuffer = new Uint8Array(await downloadData.arrayBuffer());
+    const base64Image = uint8ToBase64(imageBuffer);
+    console.log("Image downloaded and converted to base64, size:", base64Image.length);
 
-        const res = await fetch(EMBED_URL, {
+    // Initialize variables
+    let category = null;
+    let subcategory = null;
+    let colorHex = null;
+    let colorName = null;
+    let attributes = null;
+    let cropPath = null;
+    let maskPath = null;
+
+    // Check if we should use fashion segmentation
+    const SEGMENT_FOR_ITEMS = (Deno.env.get("SEGMENT_FOR_ITEMS") ?? "0") !== "0";
+    
+    if (SEGMENT_FOR_ITEMS) {
+      console.log("Attempting fashion segmentation...");
+      const segResult = await tryFashionSegmentation(base64Image);
+      trace.push(...segResult.trace);
+
+      if (segResult.success && segResult.detection) {
+        console.log("Fashion segmentation successful");
+        const detection = segResult.detection;
+        
+        // Map category
+        const categoryMap = mapFashionCategory(detection.category || detection.label || "top");
+        category = categoryMap.category;
+        subcategory = categoryMap.subcategory;
+        
+        // Store attributes if available
+        if (detection.attributes) {
+          attributes = detection.attributes;
+        }
+
+        // Extract color from crop if available
+        const cropImageB64 = segResult.crop || base64Image;
+        const colorData = await extractDominantColor(cropImageB64);
+        colorHex = colorData.hex;
+        colorName = colorData.name;
+
+        // Save crop and mask if available
+        if (segResult.crop) {
+          const cropBuffer = Uint8Array.from(atob(segResult.crop), c => c.charCodeAt(0));
+          const userId = imagePath.split('/')[0]; // Extract user ID from path
+          cropPath = `${userId}/crops/${itemId}.png`;
+          
+          await supabase.storage
+            .from('sila')
+            .upload(cropPath, cropBuffer, { contentType: 'image/png', upsert: true });
+        }
+
+        if (segResult.mask) {
+          const maskBuffer = Uint8Array.from(atob(segResult.mask), c => c.charCodeAt(0));
+          const userId = imagePath.split('/')[0];
+          maskPath = `${userId}/masks/${itemId}.png`;
+          
+          await supabase.storage
+            .from('sila')
+            .upload(maskPath, maskBuffer, { contentType: 'image/png', upsert: true });
+        }
+      }
+    }
+
+    // Fallback to caption if no fashion segmentation or if it failed
+    if (!category) {
+      console.log("Using caption fallback...");
+      const captionResult = await tryCaption(base64Image);
+      trace.push(...captionResult.trace);
+
+      // Extract color from full image
+      const colorData = await extractDominantColor(base64Image);
+      colorHex = colorData.hex;
+      colorName = colorData.name;
+
+      // Basic category assignment from caption
+      const caption = captionResult.caption.toLowerCase();
+      if (caption.includes('dress')) {
+        category = 'dress';
+        subcategory = 'dress';
+      } else if (caption.includes('shirt') || caption.includes('top')) {
+        category = 'top';
+        subcategory = 'shirt';
+      } else if (caption.includes('pants') || caption.includes('trousers')) {
+        category = 'bottom';
+        subcategory = 'trousers';
+      } else if (caption.includes('bag')) {
+        category = 'bag';
+        subcategory = 'handbag';
+      } else {
+        category = 'top';
+        subcategory = 't-shirt';
+      }
+    }
+
+    // Update item in database - only update null fields unless we have high confidence data
+    console.log("Updating item in database...");
+    const updateData: any = {};
+    
+    if (category) updateData.category = category;
+    if (subcategory) updateData.subcategory = subcategory;
+    if (colorHex) updateData.color_hex = colorHex;
+    if (colorName) updateData.color_name = colorName;
+    if (attributes) updateData.attributes = attributes;
+    if (cropPath) updateData.crop_path = cropPath;
+    if (maskPath) updateData.mask_path = maskPath;
+
+    const { error: updateError } = await supabase
+      .from('items')
+      .update(updateData)
+      .eq('id', itemId);
+
+    if (updateError) {
+      console.error("Update error:", updateError);
+      return new Response(JSON.stringify({
+        ok: false,
+        error: `Failed to update item: ${updateError.message}`
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500
+      });
+    }
+
+    // Try embeddings (optional)
+    const EMBED_URL = Deno.env.get("EMBED_URL");
+    let embedded = false;
+
+    if (EMBED_URL) {
+      try {
+        const embedHeaders = buildInferenceHeaders();
+        const embedStartTime = Date.now();
+        
+        const embedImageB64 = cropPath ? (segResult?.crop || base64Image) : base64Image;
+        const embedResponse = await fetch(EMBED_URL, {
           method: "POST",
-          headers: { ...infHeaders, Accept: "application/json" },
-          body: JSON.stringify(body),
+          headers: embedHeaders,
+          body: JSON.stringify({ inputs: embedImageB64 })
         });
 
-        const embedMs = Date.now() - embedStart;
-        trace.push({ step: "EMBED", status: res.status, ms: embedMs });
+        const embedStatus = embedResponse.status;
+        const embedMs = Date.now() - embedStartTime;
 
-        if (res.status === 404) {
-          console.warn("[EMBED] 404 at", EMBED_URL, "— skipping embedding");
-        } else if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          console.warn("[EMBED] non-2xx", res.status, txt.slice(0, 160));
-        } else {
-          const j = await res.json().catch(() => ({}));
-          embedding = Array.isArray(j?.embedding) ? j.embedding : null;
-          if (embedding) {
-            console.log(`[EMBED] Success - ${embedding.length} dimensions`);
+        if (embedResponse.ok) {
+          const embedResult = await embedResponse.json();
+          let embedding = embedResult;
+          
+          if (Array.isArray(embedding) && embedding.length > 0) {
+            embedding = embedding[0];
+          }
+          
+          if (Array.isArray(embedding)) {
+            // Insert embedding
+            const { error: embedError } = await supabase
+              .from('item_embeddings')
+              .upsert({ item_id: itemId, embedding }, { onConflict: 'item_id' });
+            
+            if (!embedError) {
+              embedded = true;
+            }
           }
         }
-      } catch (e) {
-        const embedMs = Date.now() - embedStart;
-        trace.push({ step: "EMBED", status: 0, ms: embedMs, error: String(e?.message ?? e) });
-        console.warn("[EMBED] exception", String(e?.message ?? e));
-      }
-    } else {
-      console.log("[EMBED] Skipped - EMBED_URL not configured");
-      trace.push({ step: "EMBED", status: 0, ms: 0, error: "EMBED_URL not configured" });
-    }
 
-    // Only update NULL values (respect manual edits)
-    const { data: current } = await supabase
-      .from("items").select("category, subcategory").eq("id", itemId).single();
-
-    const patch: any = { 
-      mask_path: maskPath ?? null, 
-      crop_path: cropPath ?? null 
-    };
-    
-    if (!current?.subcategory && sub) patch.subcategory = sub;
-    if (!current?.category && cat) patch.category = cat;
-    patch.color_name = colorName ?? current?.color_name ?? null;
-    patch.color_hex = colorHex ?? current?.color_hex ?? null;
-
-    // Write vector only if we have one
-    if (embedding) {
-      const { error: upsertErr } = await supabase
-        .from("item_embeddings")
-        .upsert({ item_id: itemId, embedding });
-      if (upsertErr) {
-        console.warn("[DB] item_embeddings upsert error", upsertErr.message);
+        trace.push({ step: "EMBED", url: EMBED_URL, status: embedStatus, ms: embedMs });
+      } catch (embedError) {
+        trace.push({ step: "EMBED", url: EMBED_URL, status: 0, error: embedError.message });
       }
     }
 
-    // Update items table
-    const { error: updErr } = await supabase
-      .from("items")
-      .update(patch)
-      .eq("id", itemId);
-    if (updErr) {
-      console.warn("[DB] items update error", updErr.message);
-    }
-
-    console.log(`[SUCCESS] Pipeline completed - caption: ${!!caption}, embedded: ${!!embedding}`);
+    console.log("Item processing completed successfully");
     
-    // Always return 200 with clear payload (include trace if debug mode)
-    const response: any = {
+    const response = {
       ok: true,
-      embedded: !!embedding,
-      label: sub ?? null,
-      category: cat ?? null,
-      color: colorName ?? null
+      itemId,
+      category,
+      subcategory,
+      colorHex,
+      colorName,
+      attributes,
+      embedded,
+      ...(debug && { trace })
     };
-    
-    if (debug) {
-      response.trace = trace;
-    }
-    
-    return new Response(JSON.stringify(response), { 
-      headers: { ...cors, "Content-Type": "application/json" }
+
+    return new Response(JSON.stringify(response), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200
     });
-    
-  } catch (e) {
-    console.error("items-process error:", e);
-    return new Response(JSON.stringify({ 
-      ok: false, 
-      error: String(e?.message ?? e) 
+
+  } catch (error) {
+    console.error("Unexpected error in items-process:", error);
+    return new Response(JSON.stringify({
+      ok: false,
+      error: error.message
     }), {
-      status: 500, 
-      headers: { ...cors, "Content-Type": "application/json" },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 500
     });
   }
 });
