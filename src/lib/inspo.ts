@@ -27,3 +27,33 @@ export async function uploadAndStartInspiration(file: File) {
 
   return { imagePath: key, queryId: data.queryId as string };
 }
+
+export async function runInspiration(queryId?: string) {
+  const { data, error } = await supabase.functions.invoke("inspiration-run", { body: { queryId } });
+  if (error) throw error;
+  return data;
+}
+
+export async function pollInspiration(queryId: string): Promise<{ status: string; error?: string }> {
+  const maxAttempts = 20; // 20 seconds
+  let attempts = 0;
+  
+  while (attempts < maxAttempts) {
+    const { data, error } = await supabase
+      .from('inspiration_queries')
+      .select('status, error')
+      .eq('id', queryId)
+      .single();
+    
+    if (error) throw error;
+    
+    if (data.status === 'done' || data.status === 'error') {
+      return data;
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+    attempts++;
+  }
+  
+  throw new Error('Polling timeout - process taking too long');
+}

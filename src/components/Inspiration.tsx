@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Upload, Loader2, Search, Clock, CheckCircle, XCircle } from 'lucide-react';
-import { uploadAndStartInspiration } from '@/lib/inspo';
+import { uploadAndStartInspiration, runInspiration, pollInspiration } from '@/lib/inspo';
 import { getSignedImageUrl } from '@/lib/storage';
 
 interface InspirationQuery {
@@ -176,17 +176,40 @@ export default function Inspiration({ user }: InspirationProps) {
 
     setUploading(true);
     try {
-      // Use the new helper function
+      // Upload and start the inspiration query
       const { queryId } = await uploadAndStartInspiration(file);
       
       toast({ 
-        title: 'Photo queued', 
-        description: `Query ${queryId} started.`
+        title: 'Photo uploaded', 
+        description: 'Processing your inspiration...'
       });
       
-      // Reload queries
+      // Reload queries to show the new query
       await loadQueries();
       setActiveQuery(queryId);
+      
+      // Run the inspiration process
+      await runInspiration(queryId);
+      
+      // Poll until the process is complete
+      const result = await pollInspiration(queryId);
+      
+      if (result.status === 'error') {
+        toast({ 
+          title: 'Processing failed', 
+          description: result.error || 'Unknown error occurred',
+          variant: 'destructive' 
+        });
+      } else {
+        toast({ 
+          title: 'Inspiration ready!', 
+          description: 'Your style matches are ready to view.'
+        });
+        
+        // Reload queries and detections to show results
+        await loadQueries();
+        await loadDetections(queryId);
+      }
     } catch (error: any) {
       toast({ 
         title: 'Upload failed', 
