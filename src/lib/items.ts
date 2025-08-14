@@ -36,11 +36,9 @@ export async function uploadAndProcessItem(file: File, title?: string) {
     .invoke("items-process", { body: { itemId, imagePath } });
 
   if (fnErr) {
-    const msg = (fnErr as any)?.message || "Edge Function failed";
     console.error("items-process invoke error:", fnErr);
-    // don't throw yet — we still created the item row successfully
-    return { itemId, imagePath, fn: { ok: false, error: msg } };
+    return { itemId, imagePath, fn: { ok: false, error: (fnErr as any)?.message ?? "Edge Function error" } };
   }
-
+  
   return { itemId, imagePath, fn: fnData };
 }

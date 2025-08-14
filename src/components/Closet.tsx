@@ -4,10 +4,10 @@ import { batchCreateSignedUrls } from '@/lib/storage';
 import { uploadAndProcessItem } from '@/lib/items';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, Loader2 } from 'lucide-react';
+import { Upload, Loader2, MoreHorizontal } from 'lucide-react';
 
 interface Item {
   id: string;
@@ -94,6 +94,44 @@ export default function Closet({ user }: ClosetProps) {
     }
   };
 
+  const handleRetryProcessing = async (itemId: string, imagePath: string) => {
+    setProcessing(prev => new Set([...prev, itemId]));
+    
+    try {
+      const { data, error } = await supabase.functions.invoke("items-process", {
+        body: { itemId, imagePath }
+      });
+      
+      if (error) {
+        toast({
+          title: "Retry failed",
+          description: (error as any)?.message || "Processing failed",
+          variant: "destructive"
+        });
+      } else {
+        toast({
+          title: data?.ok ? "Processing completed" : "Processing queued",
+          description: data?.ok ? "Item has been processed successfully" : "We'll retry in the background"
+        });
+      }
+      
+      // Refresh items list
+      await loadItems();
+    } catch (err: any) {
+      toast({
+        title: "Retry failed", 
+        description: err?.message || "Unknown error",
+        variant: "destructive"
+      });
+    } finally {
+      setProcessing(prev => {
+        const next = new Set(prev);
+        next.delete(itemId);
+        return next;
+      });
+    }
+  };
+
   // Remove processing state when item has category (processing completed)
   useEffect(() => {
     setProcessing(prev => {
@@ -106,7 +144,6 @@ export default function Closet({ user }: ClosetProps) {
       return newSet;
     });
   }, [items]);
-
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -137,58 +174,62 @@ export default function Closet({ user }: ClosetProps) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
         {items.map((item) => (
-          <Card key={item.id} className="group hover:shadow-lg transition-shadow">
-            <CardContent className="p-0">
-              <div className="aspect-square relative overflow-hidden rounded-t-lg bg-muted">
-                <img
-                  src={signedUrls[item.image_path] || "/placeholder.svg"}
-                  alt={item.title || 'Closet item'}
-                  className="w-full h-full object-cover transition-transform group-hover:scale-105"
-                  loading="lazy"
-                />
+          <div key={item.id} className="relative group">
+            <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+              <div className="aspect-square relative">
                 {processing.has(item.id) && (
-                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                    <div className="text-white text-center">
-                      <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
-                      <p className="text-sm">Processing...</p>
-                    </div>
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10 rounded-t-lg">
+                    <Loader2 className="h-8 w-8 animate-spin text-white" />
                   </div>
                 )}
+                <img 
+                  src={signedUrls[item.image_path] || "/placeholder.svg"} 
+                  alt={item.title || 'Closet item'}
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="secondary" size="sm" className="h-8 w-8 p-0">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem 
+                        onClick={() => handleRetryProcessing(item.id, item.image_path)}
+                        disabled={processing.has(item.id)}
+                      >
+                        {processing.has(item.id) ? 'Processing...' : 'Retry processing'}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </div>
-              
-              <div className="p-4">
-                <h3 className="font-medium text-sm mb-2 truncate">
-                  {item.title || 'Untitled'}
-                </h3>
-                
+              <CardContent className="p-4">
+                <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
                 <div className="flex flex-wrap gap-1 mb-2">
                   {item.category && (
                     <Badge variant="secondary" className="text-xs">
                       {item.category}
                     </Badge>
                   )}
+                  {item.subcategory && (
+                    <Badge variant="outline" className="text-xs">
+                      {item.subcategory}
+                    </Badge>
+                  )}
                   {item.color_name && (
-                    <Badge 
-                      variant="outline" 
-                      className="text-xs"
-                      style={{ 
-                        borderColor: item.color_hex,
-                        color: item.color_hex 
-                      }}
-                    >
+                    <Badge variant="outline" className="text-xs">
                       {item.color_name}
                     </Badge>
                   )}
                 </div>
-                
-                {item.notes && (
-                  <p className="text-xs text-muted-foreground line-clamp-2">
-                    {item.notes}
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                <div className="text-xs text-muted-foreground">
+                  Added {new Date(item.created_at).toLocaleDateString()}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         ))}
       </div>
 
