@@ -36,12 +36,15 @@ Deno.serve(async (req) => {
     // 2. Call ML inference endpoints
     const inferenceBaseUrl = Deno.env.get('INFERENCE_BASE_URL')!;
     const apiToken = Deno.env.get('INFERENCE_API_TOKEN')!;
+    const authHeader = Deno.env.get('INFERENCE_AUTH_HEADER') || 'Authorization';
+    const authPrefix = Deno.env.get('INFERENCE_AUTH_PREFIX') || 'Bearer';
+    const authValue = authPrefix ? `${authPrefix} ${apiToken}` : apiToken;
 
     // DETECT - get bounding boxes
     const detectResponse = await fetch(`${inferenceBaseUrl}${Deno.env.get('DETECT_ENDPOINT')}`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiToken}`,
+        [authHeader]: authValue,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -51,6 +54,8 @@ Deno.serve(async (req) => {
     });
 
     if (!detectResponse.ok) {
+      const errorText = await detectResponse.text().catch(() => 'Unknown error');
+      console.error(`Inference error: ${detectResponse.status} - ${errorText.slice(0, 200)}`);
       throw new Error(`Detection failed: ${detectResponse.status}`);
     }
 
@@ -68,7 +73,7 @@ Deno.serve(async (req) => {
     const segmentResponse = await fetch(`${inferenceBaseUrl}${Deno.env.get('SEGMENT_ENDPOINT')}`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiToken}`,
+        [authHeader]: authValue,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -115,7 +120,7 @@ Deno.serve(async (req) => {
     const embedResponse = await fetch(`${inferenceBaseUrl}${Deno.env.get('EMBED_ENDPOINT')}`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiToken}`,
+        [authHeader]: authValue,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
