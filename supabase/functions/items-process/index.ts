@@ -98,14 +98,52 @@ Deno.serve(async (req) => {
     await supabase.storage.from("sila").upload(maskPath, toBytes(maskBase64), { contentType: "image/png", upsert: true });
     await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64), { contentType: "image/png", upsert: true });
 
-    // EMBED
-    const embedRes = await fetch(`${baseUrl}${EMBED}`, {
-      method: "POST", headers: infHeaders, body: JSON.stringify({ image: cropBase64, format: "base64" }),
-    });
-    if (!embedRes.ok) throw new Error(`Embedding failed: ${embedRes.status}`);
-    const embedData = await embedRes.json();
-    const embedding = embedData?.embedding;
-    if (!embedding) throw new Error("Embedding missing from response");
+    // EMBED with robust fallback
+    let embedding;
+    let embedUrl = Deno.env.get("EMBED_URL") || `${baseUrl}${EMBED}`;
+    
+    // Try multiple approaches for embedding
+    const embedAttempts = [
+      // Attempt 1: JSON with inputs key
+      { url: embedUrl, body: JSON.stringify({ inputs: cropBase64 }) },
+      // Attempt 2: Original format
+      { url: embedUrl, body: JSON.stringify({ image: cropBase64, format: "base64" }) },
+      // Attempt 3: Try feature-extraction task if image-feature-extraction fails
+      { url: embedUrl.replace("image-feature-extraction", "feature-extraction"), body: JSON.stringify({ inputs: cropBase64 }) },
+      // Attempt 4: Fallback to different model
+      { url: "https://router.huggingface.co/hf-inference/models/laion/CLIP-ViT-B-32-laion2B-s34B-b79K?task=feature-extraction", body: JSON.stringify({ inputs: cropBase64 }) },
+    ];
+
+    let embedSuccess = false;
+    for (let i = 0; i < embedAttempts.length && !embedSuccess; i++) {
+      const attempt = embedAttempts[i];
+      console.log(`EMBED attempt ${i + 1}: ${attempt.url.split('?')[0]}?task=${attempt.url.split('task=')[1] || 'unknown'}`);
+      
+      try {
+        const embedRes = await fetch(attempt.url, {
+          method: "POST", headers: infHeaders, body: attempt.body,
+        });
+        
+        console.log(`EMBED attempt ${i + 1} status: ${embedRes.status}`);
+        
+        if (embedRes.ok) {
+          const embedData = await embedRes.json();
+          embedding = embedData?.embedding || embedData;
+          if (embedding && Array.isArray(embedding)) {
+            embedSuccess = true;
+            console.log(`EMBED success with ${embedding.length} dimensions`);
+          }
+        } else if (i === embedAttempts.length - 1) {
+          const errorText = await embedRes.text().catch(() => "");
+          throw new Error(`All embedding attempts failed. Last: ${embedRes.status}${errorText ? ` - ${errorText.slice(0, 100)}` : ""}`);
+        }
+      } catch (e) {
+        if (i === embedAttempts.length - 1) throw e;
+        console.log(`EMBED attempt ${i + 1} failed: ${e.message}`);
+      }
+    }
+    
+    if (!embedding || !Array.isArray(embedding)) throw new Error("No valid embedding returned from any attempt");
 
     const { error: upsertErr } = await supabase.from("item_embeddings").upsert({ item_id: itemId, embedding });
     if (upsertErr) throw upsertErr;
