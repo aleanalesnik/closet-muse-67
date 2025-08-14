@@ -61,6 +61,26 @@ async function callInferenceWithRetry(url: string, body: object, stage: string, 
   }
 }
 
+// Text embedding fallback using sentence-transformers
+async function embedTextFallback(text: string, headers: Record<string, string>) {
+  const GTE_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2";
+  console.log(`[TEXT-EMBED] Using text fallback: "${text.slice(0, 100)}..."`);
+  
+  const res = await fetch(GTE_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ inputs: text })
+  });
+  
+  if (!res.ok) {
+    console.warn(`[TEXT-EMBED] Failed: ${res.status}`);
+    return null;
+  }
+  
+  const embedding = await res.json();
+  return Array.isArray(embedding) && Array.isArray(embedding[0]) ? embedding[0] : embedding;
+}
+
 async function extractDominantColor(base64Image: string): Promise<{ colorName: string; colorHex: string }> {
   try {
     const base64Data = base64Image.replace(/^data:image\/[^;]+;base64,/, '');
@@ -98,6 +118,35 @@ async function extractDominantColor(base64Image: string): Promise<{ colorName: s
     console.warn("Color extraction failed:", error.message);
     return { colorName: "brown", colorHex: "#8B5A2B" };
   }
+}
+
+async function captionAndMatch(base64Img: string) {
+  const CAPTION_URL = "https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning";
+  const headers = buildInferenceHeaders();
+  
+  const res = await fetch(CAPTION_URL, { 
+    method: "POST", 
+    headers: { ...headers, "Accept": "application/json" }, 
+    body: JSON.stringify({ inputs: base64Img }) 
+  });
+  
+  if (!res.ok) return null;
+  
+  const j = await res.json();
+  const caption = Array.isArray(j) ? (j[0]?.generated_text ?? j[0]?.summary_text) : (j.generated_text ?? j.caption ?? "");
+  if (!caption) return null;
+  
+  // Simple vocab match for clothing items
+  const CLOTHING_VOCAB = ["shirt", "dress", "pants", "shoes", "jacket", "sweater", "skirt", "boots", "bag", "hat"];
+  
+  for (const item of CLOTHING_VOCAB) {
+    if (caption.toLowerCase().includes(item)) {
+      return { label: item, score: 0.6 };
+    }
+  }
+  
+  // Return the caption itself if no specific match
+  return { label: caption.toLowerCase(), score: 0.5 };
 }
 
 function mapRgbToColorName(r: number, g: number, b: number): string {
@@ -219,16 +268,31 @@ async function createRealDetections(queryId: string, imagePath: string, supabase
       }
     }
     
-    // EMBED
+    // EMBED with fallback to text embedding
     console.log(`[EMBED] Processing detection ${i + 1}...`);
-    const embedData = await callInferenceWithRetry(
-      EMBED_URL, 
-      { inputs: cropBase64 }, 
-      "EMBED", 
-      infHeaders
-    );
+    let embedding = null;
     
-    const embedding = embedData?.embedding;
+    try {
+      const embedData = await callInferenceWithRetry(
+        EMBED_URL, 
+        { inputs: cropBase64 }, 
+        "EMBED", 
+        infHeaders
+      );
+      embedding = embedData?.embedding;
+    } catch (error) {
+      if (error.message.includes('404')) {
+        console.log(`[EMBED] 404 fallback: captioning crop for text embedding`);
+        // Caption the crop first
+        const captionResult = await captionAndMatch(cropBase64);
+        if (captionResult?.label) {
+          const textEmbed = await embedTextFallback(`clothing item: ${captionResult.label}`, infHeaders);
+          if (textEmbed) embedding = textEmbed;
+        }
+      }
+      if (!embedding) throw error;
+    }
+    
     if (!embedding || !Array.isArray(embedding)) {
       console.warn(`[EMBED] Invalid embedding for detection ${i + 1}, skipping`);
       continue;

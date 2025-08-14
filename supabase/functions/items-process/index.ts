@@ -206,6 +206,26 @@ async function captionAndMatch(base64Img: string) {
   return best.label ? best : null;
 }
 
+// Text embedding fallback using sentence-transformers
+async function embedTextFallback(text: string, headers: Record<string, string>) {
+  const GTE_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2";
+  console.log(`[TEXT-EMBED] Using text fallback: "${text.slice(0, 100)}..."`);
+  
+  const res = await fetch(GTE_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ inputs: text })
+  });
+  
+  if (!res.ok) {
+    console.warn(`[TEXT-EMBED] Failed: ${res.status}`);
+    return null;
+  }
+  
+  const embedding = await res.json();
+  return Array.isArray(embedding) && Array.isArray(embedding[0]) ? embedding[0] : embedding;
+}
+
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -315,16 +335,31 @@ Deno.serve(async (req) => {
       });
     }
 
-    // STEP 3: EMBED
+    // STEP 3: EMBED with fallback to text embedding
     console.log(`[EMBED] Starting embedding...`);
-    const embedData = await callInferenceWithRetry(
-      EMBED_URL, 
-      { inputs: cropBase64 }, 
-      "EMBED", 
-      infHeaders
-    );
+    let embedding = null;
     
-    const embedding = embedData?.embedding;
+    try {
+      const embedData = await callInferenceWithRetry(
+        EMBED_URL, 
+        { inputs: cropBase64 }, 
+        "EMBED", 
+        infHeaders
+      );
+      embedding = embedData?.embedding;
+    } catch (error) {
+      if (error.message.includes('404')) {
+        console.log(`[EMBED] 404 fallback: captioning crop for text embedding`);
+        // Caption the crop first
+        const captionResult = await captionAndMatch(base64Image);
+        if (captionResult?.label) {
+          const textEmbed = await embedTextFallback(`clothing item: ${captionResult.label}`, infHeaders);
+          if (textEmbed) embedding = textEmbed;
+        }
+      }
+      if (!embedding) throw error;
+    }
+    
     if (!embedding || !Array.isArray(embedding)) {
       throw new Error("Embedding returned no valid embedding array");
     }
