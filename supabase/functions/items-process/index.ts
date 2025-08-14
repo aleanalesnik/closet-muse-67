@@ -134,20 +134,34 @@ Deno.serve(async (req) => {
       console.log(`[SEGMENT] Skipped - no SEGMENT_URL configured`);
     }
 
-    // Store mask/crop
+    // Derive consistent output paths from input imagePath (userId/items/uuid.ext)
     const parts = imagePath.split("/");
     const userId = parts[0];
     const itemUuid = parts[2]?.split(".")[0];
+    
+    if (!userId || !itemUuid) {
+      throw new Error(`Invalid imagePath format: ${imagePath}. Expected userId/items/uuid.ext`);
+    }
+    
     const maskPath = `${userId}/items/${itemUuid}-mask.png`;
     const cropPath = `${userId}/items/${itemUuid}-crop.png`;
 
+    // Store files to storage
     const toBytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     
-    // Store crop (always) and mask (if available)
+    // Always save crop (either segmented or original image)
+    await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64), { 
+      contentType: "image/png", 
+      upsert: true 
+    });
+    
+    // Only save mask if we have one from segmentation
     if (maskBase64) {
-      await supabase.storage.from("sila").upload(maskPath, toBytes(maskBase64), { contentType: "image/png", upsert: true });
+      await supabase.storage.from("sila").upload(maskPath, toBytes(maskBase64), { 
+        contentType: "image/png", 
+        upsert: true 
+      });
     }
-    await supabase.storage.from("sila").upload(cropPath, toBytes(cropBase64), { contentType: "image/png", upsert: true });
 
     // STEP 3: EMBED
     console.log(`[EMBED] Starting embedding...`);
@@ -163,19 +177,29 @@ Deno.serve(async (req) => {
       throw new Error("Embedding returned no valid embedding array");
     }
 
-    // Store results
-    const { error: upsertErr } = await supabase.from("item_embeddings").upsert({ item_id: itemId, embedding });
-    if (upsertErr) throw upsertErr;
-
+    // Atomic database updates
     const color_hex = "#8B5A2B"; // placeholder
     const color_name = "brown"; // placeholder
     
-    const { error: updErr } = await supabase.from("items").update({
-      category, subcategory, color_hex, color_name, 
-      mask_path: maskBase64 ? maskPath : null, 
-      crop_path: cropPath,
-    }).eq("id", itemId);
-    if (updErr) throw updErr;
+    // Upsert embedding
+    const { error: upsertErr } = await supabase
+      .from("item_embeddings")
+      .upsert({ item_id: itemId, embedding });
+    if (upsertErr) throw new Error(`Failed to upsert embedding: ${upsertErr.message}`);
+
+    // Update items with all metadata
+    const { error: updErr } = await supabase
+      .from("items")
+      .update({
+        category, 
+        subcategory, 
+        color_hex, 
+        color_name,
+        mask_path: maskBase64 ? maskPath : null,
+        crop_path: cropPath,
+      })
+      .eq("id", itemId);
+    if (updErr) throw new Error(`Failed to update item: ${updErr.message}`);
 
     console.log(`[SUCCESS] Pipeline completed - embedding dims: ${embedding.length}`);
     return new Response(JSON.stringify({ ok: true, embedding_dims: embedding.length }), {
