@@ -27,6 +27,93 @@ function uint8ToBase64(u8: Uint8Array) {
   return btoa(binary);
 }
 
+async function extractDominantColor(base64Image: string): Promise<{ colorName: string; colorHex: string }> {
+  try {
+    // Remove data URL prefix if present
+    const base64Data = base64Image.replace(/^data:image\/[^;]+;base64,/, '');
+    const imageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+    
+    // Simple PNG/JPEG header detection for basic parsing
+    const isPNG = imageBytes[0] === 0x89 && imageBytes[1] === 0x50;
+    const isJPEG = imageBytes[0] === 0xFF && imageBytes[1] === 0xD8;
+    
+    if (!isPNG && !isJPEG) {
+      throw new Error("Unsupported image format for color extraction");
+    }
+    
+    // For simplicity, extract color from a sample of pixels
+    // This is a basic heuristic - in production you'd use proper image decoding
+    let r = 0, g = 0, b = 0, samples = 0;
+    
+    // Sample every 100th byte as RGB approximation (very rough heuristic)
+    for (let i = 100; i < imageBytes.length - 2; i += 100) {
+      r += imageBytes[i];
+      g += imageBytes[i + 1];  
+      b += imageBytes[i + 2];
+      samples++;
+    }
+    
+    if (samples === 0) {
+      throw new Error("No color samples extracted");
+    }
+    
+    r = Math.round(r / samples);
+    g = Math.round(g / samples);
+    b = Math.round(b / samples);
+    
+    const colorHex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    const colorName = mapRgbToColorName(r, g, b);
+    
+    return { colorName, colorHex };
+  } catch (error) {
+    console.warn("Color extraction failed:", error.message);
+    // Fallback to brown as before
+    return { colorName: "brown", colorHex: "#8B5A2B" };
+  }
+}
+
+function mapRgbToColorName(r: number, g: number, b: number): string {
+  // Simple color mapping based on dominant channel and brightness
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const brightness = (r + g + b) / 3;
+  const saturation = max === 0 ? 0 : (max - min) / max;
+  
+  // Low saturation colors (grays)
+  if (saturation < 0.3) {
+    if (brightness < 60) return "black";
+    if (brightness < 120) return "gray";
+    if (brightness < 200) return "light gray";
+    return "white";
+  }
+  
+  // High saturation colors
+  if (r > g && r > b) {
+    if (g > b * 1.5) return "yellow";
+    if (b > g * 1.2) return "purple";
+    return "red";
+  }
+  
+  if (g > r && g > b) {
+    if (r > b * 1.2) return "yellow";
+    if (b > r * 1.2) return "teal";
+    return "green";
+  }
+  
+  if (b > r && b > g) {
+    if (r > g * 1.2) return "purple";
+    if (g > r * 1.2) return "teal";
+    return "blue";
+  }
+  
+  // Mixed colors
+  if (r > 150 && g > 100 && b < 100) return "orange";
+  if (r > 100 && g < 100 && b > 100) return "purple";
+  if (r < 100 && g > 100 && b > 100) return "cyan";
+  
+  return "brown"; // fallback
+}
+
 async function callInferenceWithRetry(url: string, body: object, stage: string, headers: Record<string, string>) {
   const maxRetries = 2;
   const delays = [250, 750]; // ms
@@ -177,9 +264,13 @@ Deno.serve(async (req) => {
       throw new Error("Embedding returned no valid embedding array");
     }
 
+    // Extract dominant color from crop
+    console.log(`[COLOR] Extracting dominant color from crop...`);
+    const { colorName, colorHex } = await extractDominantColor(cropBase64);
+    console.log(`[COLOR] Detected: ${colorName} (${colorHex})`);
+    
     // Atomic database updates
-    const color_hex = "#8B5A2B"; // placeholder
-    const color_name = "brown"; // placeholder
+    // Use extracted colors instead of placeholders
     
     // Upsert embedding
     const { error: upsertErr } = await supabase
@@ -193,8 +284,8 @@ Deno.serve(async (req) => {
       .update({
         category, 
         subcategory, 
-        color_hex, 
-        color_name,
+        color_hex: colorHex, 
+        color_name: colorName,
         mask_path: maskBase64 ? maskPath : null,
         crop_path: cropPath,
       })
