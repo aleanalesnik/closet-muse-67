@@ -150,6 +150,10 @@ async function callInferenceWithRetry(url: string, body: object, stage: string, 
   }
 }
 
+function isHFHosted(url: string) {
+  return /huggingface\.co\/|router\.huggingface\.co\//.test(url);
+}
+
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -185,12 +189,23 @@ Deno.serve(async (req) => {
 
     // STEP 1: DETECT
     console.log(`[DETECT] Starting detection...`);
-    const detectData = await callInferenceWithRetry(
-      DETECT_URL, 
-      { inputs: base64Image }, 
-      "DETECT", 
-      infHeaders
-    );
+    
+    const detectBody = isHFHosted(DETECT_URL)
+      ? { inputs: base64Image }            // HF Hosted/Router
+      : { image: base64Image, format: "base64" }; // custom endpoint
+
+    const detectRes = await fetch(DETECT_URL, {
+      method: "POST",
+      headers: { ...infHeaders, Accept: "application/json" },
+      body: JSON.stringify(detectBody),
+    });
+    
+    if (!detectRes.ok) {
+      const errorText = await detectRes.text();
+      throw new Error(`DETECT failed: ${detectRes.status} - ${errorText}`);
+    }
+    
+    const detectData = await detectRes.json();
     
     const boxes = Array.isArray(detectData?.boxes) ? detectData.boxes : [];
     if (boxes.length === 0) throw new Error("No objects detected in image");
