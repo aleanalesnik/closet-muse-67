@@ -201,6 +201,97 @@ export const YolosDetectBlock = () => {
   );
 };
 
+// YOLOS Normalize transform block
+export const YolosNormalizeBlock = () => {
+  const [result, setResult] = useState<any>(null);
+
+  const executeNormalize = () => {
+    try {
+      // Read the raw output from YOLOS Detect (adapt if your block name differs)
+      const detect: any = {}; // In real implementation, this would be wired from YOLOS Detect
+      
+      // Try common locations where Lovable/fetch may put JSON
+      const raw = detect?.body ?? detect?.data ?? detect?.result ?? detect;
+
+      // Find an array of detections no matter the key name
+      let result =
+        Array.isArray(raw) ? raw :
+        raw?.result ?? raw?.results ?? raw?.outputs ?? raw?.detections ?? null;
+
+      // Pull a latency if present (best-effort)
+      const latency =
+        raw?.latencyMs ?? raw?.latency ??
+        detect?.headers?.['x-exec-time'] ?? null;
+
+      // Build top labels safely
+      let labels = [];
+      if (Array.isArray(result)) {
+        labels = [...new Set(
+          result
+            .filter(r => r && typeof r.label === 'string')
+            .sort((a,b) => (b?.score ?? 0) - (a?.score ?? 0))
+            .slice(0, 3)
+            .map(r => r.label.toLowerCase())
+        )];
+      }
+
+      // Tiny preview for debugging in toast (avoid 50k char overflow)
+      const bodyPreview = (() => {
+        try { return JSON.stringify(raw).slice(0, 240) + '…'; }
+        catch { return '[unserializable body]'; }
+      })();
+
+      const output = {
+        available: Array.isArray(result) && result.length > 0,
+        result,
+        labels,
+        latency,
+        bodyPreview
+      };
+
+      setResult(output);
+    } catch (error) {
+      setResult({ error: error instanceof Error ? error.message : 'Normalize failed' });
+    }
+  };
+
+  return (
+    <Card className="w-full max-w-2xl">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg font-semibold">YOLOS Normalize</CardTitle>
+          <Badge variant="secondary" className="font-mono text-xs">
+            Transform
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <span className="text-sm font-medium text-muted-foreground">Input (from YOLOS Detect):</span>
+          <div className="text-sm text-muted-foreground bg-muted p-3 rounded">
+            Wire from YOLOS Detect block output...
+          </div>
+        </div>
+        
+        <div className="flex justify-end">
+          <Button onClick={executeNormalize} className="min-w-24">
+            Normalize
+          </Button>
+        </div>
+
+        {result && (
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Normalized Output:</span>
+            <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
 // Transform block for building YOLOS patch data
 export const BuildYolosPatchBlock = () => {
   const [detections, setDetections] = useState('[]');
