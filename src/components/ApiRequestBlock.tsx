@@ -487,4 +487,62 @@ export const YolosPersistBlock = () => {
   );
 };
 
+// Debug transform for YOLOS Persist response
+export const PersistDebugBlock = () => {
+  const [input, setInput] = useState('{}');
+  const [result, setResult] = useState<any>(null);
+
+  const executeDebug = () => {
+    try {
+      const parsedInput = JSON.parse(input);
+      const r = parsedInput["YOLOS Persist"];
+      const status = r?.status ?? r?.response?.status ?? null;
+      const body = r?.data ?? r?.json ?? r?.response?.data ?? r?.response ?? null;
+      
+      setResult({ status, body });
+    } catch (error) {
+      setResult({ error: error instanceof Error ? error.message : 'Debug failed' });
+    }
+  };
+
+  return (
+    <Card className="w-full max-w-2xl">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg font-semibold">Persist Debug</CardTitle>
+          <Badge variant="secondary" className="font-mono text-xs">
+            Transform
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <span className="text-sm font-medium text-muted-foreground">Input (from YOLOS Persist response):</span>
+          <Textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Wire from YOLOS Persist block response..."
+            className="font-mono text-sm min-h-24"
+          />
+        </div>
+        
+        <div className="flex justify-end">
+          <Button onClick={executeDebug} className="min-w-24">
+            Debug
+          </Button>
+        </div>
+
+        {result && (
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Debug Output:</span>
+            <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
 export default ApiRequestBlock;
