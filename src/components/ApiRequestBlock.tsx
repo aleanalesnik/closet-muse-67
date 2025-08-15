@@ -268,6 +268,63 @@ export const YolosNormalizeBlock = () => {
   );
 };
 
+// Debug Log block for YOLOS Normalize output
+export const YolosDebugLogBlock = () => {
+  const [result, setResult] = useState<any>(null);
+
+  const executeDebugLog = () => {
+    try {
+      // This would be $prev from YOLOS Normalize in real implementation
+      const prev: any = {}; // Wire from previous block
+      
+      const debugInfo = {
+        keys: Object.keys(prev || {}),
+        sample: (prev && JSON.stringify(prev).slice(0, 300)) || null
+      };
+
+      setResult(debugInfo);
+    } catch (error) {
+      setResult({ error: error instanceof Error ? error.message : 'Debug log failed' });
+    }
+  };
+
+  return (
+    <Card className="w-full max-w-2xl">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg font-semibold">Debug (Log)</CardTitle>
+          <Badge variant="secondary" className="font-mono text-xs">
+            Debug
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <span className="text-sm font-medium text-muted-foreground">Input (from YOLOS Normalize):</span>
+          <div className="text-sm text-muted-foreground bg-muted p-3 rounded">
+            Wire from YOLOS Normalize block output...
+          </div>
+        </div>
+        
+        <div className="flex justify-end">
+          <Button onClick={executeDebugLog} className="min-w-24">
+            Log
+          </Button>
+        </div>
+
+        {result && (
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Debug Output:</span>
+            <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
 // Transform block for building YOLOS patch data
 export const BuildYolosPatchBlock = () => {
   const [detections, setDetections] = useState('[]');
@@ -392,165 +449,141 @@ export const BuildYolosPatchBlock = () => {
   );
 };
 
-// Pre-configured YOLOS Persist block
+// YOLOS Persist - JavaScript block with exact code provided
 export const YolosPersistBlock = () => {
-  const [patchData, setPatchData] = useState<any>(null);
+  const [result, setResult] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [response, setResponse] = useState<any>(null);
-  const [latency, setLatency] = useState<number | null>(null);
 
-  const handleExecute = async () => {
-    if (!patchData?.ok || !patchData?.itemId) {
-      // Show skip toast
-      return;
-    }
-
+  const executeYolosPersist = async () => {
     setIsLoading(true);
-    const startTime = Date.now();
-    
     try {
-      const fetchOptions: RequestInit = {
+      // EXPECTS:
+      //  - previous step ($prev) to contain YOLOS normalized data, e.g.:
+      //      { labels: [{ label, score }...],
+      //        boxes: [{ xmin, ymin, xmax, ymax, score, label }...],
+      //        top3: ["label", ...],      // optional
+      //        latency: 2531,             // ms
+      //        threshold: 0.5,            // optional
+      //        model: "valentinafeve/yolos-fashionpedia" // optional
+      //      }
+      //  - a variable 'itemId' available (the id of the newly created/updated item)
+      //  - Supabase REST headers are set with anon key (Authorization + apikey) as in our earlier blocks.
+
+      // Simulated context - in real implementation this would come from the workflow
+      const ctx: any = {
+        prev: {}, // This would be the output from YOLOS Normalize
+        vars: { itemId: '' }, // This would be set by the workflow
+        input: {},
+        ui: {
+          toast: (message: string) => console.log('Toast:', message)
+        }
+      };
+
+      const prev = ctx.prev ?? {};                       // output of YOLOS Normalize
+      const itemId = ctx.vars?.itemId || ctx.input?.itemId;
+
+      // Normalize shape regardless of nesting
+      const src = prev?.yolos ? prev.yolos : prev;       // handle either {yolos:{...}} or flat
+      const labels = Array.isArray(src?.labels) ? src.labels : [];
+      const latency = Number.isFinite(src?.latency) ? Math.round(src.latency) : null;
+      const boxes = Array.isArray(src?.boxes) ? src.boxes : [];
+      const top3 = (Array.isArray(src?.top3) ? src.top3 : labels.map((x: any) => x.label)).slice(0, 3);
+      const model = src?.model || 'valentinafeve/yolos-fashionpedia';
+      const threshold = Number.isFinite(src?.threshold) ? src.threshold : 0.5;
+
+      // Guardrails & toasts
+      if (!itemId) {
+        ctx.ui.toast('Missing item id; cannot persist.');
+        setResult({ ok: false, reason: 'no_item_id' });
+        return;
+      }
+      if (!labels.length || latency === null) {
+        ctx.ui.toast('YOLOS ran but returned no labels; skipping persist.');
+        setResult({ ok: false, reason: 'no_labels_or_latency' });
+        return;
+      }
+
+      // Supabase REST PATCH
+      // Reuse the same anon key approach we used earlier: both Authorization and apikey headers.
+      const SUPABASE_URL = 'https://tqbjbugwwffdfhihpkcg.supabase.co';
+      const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA';
+
+      const url = `${SUPABASE_URL}/rest/v1/items?id=eq.${encodeURIComponent(itemId)}`;
+      const body = {
+        yolos_latency_ms: latency,
+        yolos_model: model,
+        yolos_top_labels: top3,
+        yolos_result: { labels, boxes, threshold }
+      };
+
+      const res = await fetch(url, {
         method: 'PATCH',
         headers: {
-          "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
-          "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
-          "Content-Type": "application/json",
-          "Prefer": "return=representation"
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation',
+          'Authorization': `Bearer ${ANON}`,
+          'apikey': ANON
         },
-        body: JSON.stringify(patchData.patch)
-      };
-      
-      const url = `https://tqbjbugwwffdfhihpkcg.supabase.co/rest/v1/items?id=eq.${patchData.itemId}`;
-      const res = await fetch(url, fetchOptions);
-      const endTime = Date.now();
-      setLatency(endTime - startTime);
-      
-      const responseData = await res.json();
-      setResponse(responseData);
-      
-      if (res.ok) {
-        // Success toast would be shown here
-        console.log(`AI ✓ saved ${patchData.patch.yolos_top_labels?.length || 0} tags in ${patchData.patch.yolos_latency_ms || 0} ms`);
-      } else {
-        // Error toast would be shown here
-        console.error(`YOLOS persist failed — ${res.status}`);
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) {
+        const errTxt = await res.text().catch(() => '');
+        ctx.ui.toast(`YOLOS persist error: ${res.status} ${errTxt}`);  // visible failure
+        setResult({ ok: false, status: res.status, error: errTxt });
+        return;
       }
+
+      const rows = await res.json().catch(() => []);
+      const updated = rows?.[0]?.id || itemId;
+
+      ctx.ui.toast(`YOLOS saved ✓ — ${top3.join(', ') || 'no labels'} (${latency} ms)`);  // visible success
+      setResult({ ok: true, updatedId: updated, saved: body });
     } catch (error) {
-      const endTime = Date.now();
-      setLatency(endTime - startTime);
-      setResponse({ error: error instanceof Error ? error.message : 'Unknown error' });
-      console.error('YOLOS persist failed —', error);
+      setResult({ error: error instanceof Error ? error.message : 'Persist failed' });
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="space-y-4">
-      <Card className="w-full max-w-2xl">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg font-semibold">YOLOS Persist</CardTitle>
-            <Badge variant="secondary" className="font-mono text-xs">
-              PATCH
-            </Badge>
+    <Card className="w-full max-w-2xl">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg font-semibold">YOLOS Persist</CardTitle>
+          <Badge variant="secondary" className="font-mono text-xs">
+            JavaScript
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <span className="text-sm font-medium text-muted-foreground">Description:</span>
+          <div className="text-sm text-muted-foreground bg-muted p-3 rounded">
+            Persists YOLOS normalized data to Supabase items table. Expects normalized data from previous step and itemId variable.
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <span className="text-sm font-medium text-muted-foreground">Patch Data (from Build YOLOS Patch):</span>
-            <Textarea
-              value={JSON.stringify(patchData, null, 2)}
-              onChange={(e) => {
-                try {
-                  setPatchData(JSON.parse(e.target.value));
-                } catch {
-                  // Invalid JSON, ignore
-                }
-              }}
-              placeholder="Wire from Build YOLOS Patch block output..."
-              className="font-mono text-sm min-h-32"
-            />
-          </div>
-          
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium text-muted-foreground">URL:</span>
-            <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
-              https://tqbjbugwwffdfhihpkcg.supabase.co/rest/v1/items?id=eq.{patchData?.itemId || '{{itemId}}'}
-            </code>
-          </div>
-          
-          <div className="space-y-2">
-            <span className="text-sm font-medium text-muted-foreground">Headers:</span>
-            <div className="flex items-center space-x-2">
-              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
-                Authorization:
-              </code>
-              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
-                Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA
-              </code>
-            </div>
-            <div className="flex items-center space-x-2">
-              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
-                apikey:
-              </code>
-              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
-                eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA
-              </code>
-            </div>
-            <div className="flex items-center space-x-2">
-              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
-                Content-Type:
-              </code>
-              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
-                application/json
-              </code>
-            </div>
-            <div className="flex items-center space-x-2">
-              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
-                Prefer:
-              </code>
-              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
-                return=representation
-              </code>
-            </div>
-          </div>
+        </div>
+        
+        <div className="flex justify-end">
+          <Button 
+            onClick={executeYolosPersist}
+            disabled={isLoading}
+            className="min-w-24"
+          >
+            {isLoading ? 'Persisting...' : 'Execute'}
+          </Button>
+        </div>
 
+        {result && (
           <div className="space-y-2">
-            <span className="text-sm font-medium text-muted-foreground">Body (JSON from patch):</span>
-            <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap">
-              {patchData?.patch ? JSON.stringify(patchData.patch, null, 2) : 'Waiting for patch data...'}
+            <span className="text-sm font-medium text-muted-foreground">Result:</span>
+            <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
+              {JSON.stringify(result, null, 2)}
             </pre>
           </div>
-          
-          <div className="flex justify-end">
-            <Button 
-              onClick={handleExecute}
-              disabled={isLoading || !patchData?.ok || !patchData?.itemId}
-              className="min-w-24"
-            >
-              {isLoading ? 'Persisting...' : 'Persist'}
-            </Button>
-          </div>
-
-          {response && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-muted-foreground">Response:</span>
-                {latency && (
-                  <Badge variant="outline" className="text-xs">
-                    {latency}ms
-                  </Badge>
-                )}
-              </div>
-              <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
-                {JSON.stringify(response, null, 2)}
-              </pre>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+        )}
+      </CardContent>
+    </Card>
   );
 };
 
