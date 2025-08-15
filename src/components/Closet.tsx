@@ -78,9 +78,11 @@ export default function Closet({ user }: ClosetProps) {
       const newItemImageDataURL = e.target?.result as string;
       setSelectedImagePreview(newItemImageDataURL);
       
-      // Call YOLOS Detect API
+      // Call YOLOS Detect API immediately after file selection
       setYolosAnalyzing(true);
       setYolosResult(null);
+      
+      const yolosStartTime = Date.now();
       
       try {
         const yolosBody = {
@@ -98,18 +100,24 @@ export default function Closet({ user }: ClosetProps) {
           body: JSON.stringify(yolosBody)
         });
 
+        const yolosLatency = Date.now() - yolosStartTime;
         const responseData = await response.json();
         
         if (response.ok && responseData.status === "success") {
-          setYolosResult(responseData);
+          const yolosResultWithLatency = {
+            ...responseData,
+            latencyMs: yolosLatency
+          };
+          setYolosResult(yolosResultWithLatency);
         } else {
           throw new Error('Detection failed');
         }
       } catch (error) {
         toast({
-          title: "Detection temporarily unavailable. Try again.",
+          title: "YOLOS call failed. Please try again.",
           variant: "destructive"
         });
+        setYolosResult({ error: true });
       } finally {
         setYolosAnalyzing(false);
       }
@@ -117,6 +125,7 @@ export default function Closet({ user }: ClosetProps) {
     
     reader.readAsDataURL(file);
 
+    // Continue with existing upload flow
     setUploading(true);
     try {
       console.log("Starting upload for file:", file.name);
@@ -239,28 +248,32 @@ export default function Closet({ user }: ClosetProps) {
                 src={selectedImagePreview} 
                 alt="Preview" 
                 className="w-full h-64 object-cover rounded"
-                id="yolos-preview-image"
               />
-              {yolosResult?.result && (
-                <div className="mt-4 space-y-2">
-                  <div className="text-sm font-medium">
-                    Detections: {yolosResult.result.length}
+              {yolosAnalyzing && (
+                <div className="mt-2 text-sm text-muted-foreground">
+                  Analyzing with YOLOS (Supabase)…
+                </div>
+              )}
+              {yolosResult && !yolosAnalyzing && (
+                <div className="mt-2 space-y-1">
+                  <div id="yolos-proof" className="text-sm font-medium">
+                    {yolosResult.error 
+                      ? "YOLOS ✗ (error)"
+                      : `YOLOS ✓ — ${yolosResult.result.length} detections in ${yolosResult.latencyMs} ms`
+                    }
                   </div>
-                  <div className="space-y-1">
-                    {yolosResult.result.slice(0, 3).map((detection: any, idx: number) => (
-                      <div key={idx} className="text-xs text-muted-foreground">
-                        {detection.label}: {(detection.score * 100).toFixed(2)}%
-                      </div>
-                    ))}
-                  </div>
+                  {yolosResult.result && (
+                    <div className="space-y-1">
+                      {yolosResult.result.slice(0, 3).map((detection: any, idx: number) => (
+                        <div key={idx} className="text-xs text-muted-foreground">
+                          {detection.label}: {(detection.score * 100).toFixed(2)}%
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-            {yolosAnalyzing && (
-              <div className="text-sm text-muted-foreground mt-2">
-                Analyzing outfit…
-              </div>
-            )}
           </Card>
         </div>
       )}
