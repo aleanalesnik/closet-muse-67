@@ -32,6 +32,9 @@ export default function Closet({ user }: ClosetProps) {
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState<Set<string>>(new Set());
   const [signedUrls, setSignedUrls] = useState<{ [path: string]: string }>({});
+  const [yolosAnalyzing, setYolosAnalyzing] = useState(false);
+  const [yolosResult, setYolosResult] = useState<any>(null);
+  const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -69,6 +72,51 @@ export default function Closet({ user }: ClosetProps) {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Convert image to data URL for YOLOS detection
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const newItemImageDataURL = e.target?.result as string;
+      setSelectedImagePreview(newItemImageDataURL);
+      
+      // Call YOLOS Detect API
+      setYolosAnalyzing(true);
+      setYolosResult(null);
+      
+      try {
+        const yolosBody = {
+          "base64Image": newItemImageDataURL,
+          "threshold": 0.5
+        };
+
+        const response = await fetch('https://tqbjbugwwffdfhihpkcg.functions.supabase.co/sila-model-debugger', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA',
+            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(yolosBody)
+        });
+
+        const responseData = await response.json();
+        
+        if (response.ok && responseData.status === "success") {
+          setYolosResult(responseData);
+        } else {
+          throw new Error('Detection failed');
+        }
+      } catch (error) {
+        toast({
+          title: "Detection temporarily unavailable. Try again.",
+          variant: "destructive"
+        });
+      } finally {
+        setYolosAnalyzing(false);
+      }
+    };
+    
+    reader.readAsDataURL(file);
+
     setUploading(true);
     try {
       console.log("Starting upload for file:", file.name);
@@ -96,6 +144,8 @@ export default function Closet({ user }: ClosetProps) {
       });
     } finally {
       setUploading(false);
+      setSelectedImagePreview(null);
+      setYolosResult(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -171,7 +221,7 @@ export default function Closet({ user }: ClosetProps) {
           />
           <Button
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+            disabled={uploading || yolosAnalyzing}
             className="flex items-center gap-2"
           >
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
@@ -179,6 +229,41 @@ export default function Closet({ user }: ClosetProps) {
           </Button>
         </div>
       </div>
+
+      {/* YOLOS Detection Preview */}
+      {selectedImagePreview && (
+        <div className="mb-8 max-w-md mx-auto">
+          <Card className="p-4">
+            <div className="relative">
+              <img 
+                src={selectedImagePreview} 
+                alt="Preview" 
+                className="w-full h-64 object-cover rounded"
+                id="yolos-preview-image"
+              />
+              {yolosResult?.result && (
+                <div className="mt-4 space-y-2">
+                  <div className="text-sm font-medium">
+                    Detections: {yolosResult.result.length}
+                  </div>
+                  <div className="space-y-1">
+                    {yolosResult.result.slice(0, 3).map((detection: any, idx: number) => (
+                      <div key={idx} className="text-xs text-muted-foreground">
+                        {detection.label}: {(detection.score * 100).toFixed(2)}%
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            {yolosAnalyzing && (
+              <div className="text-sm text-muted-foreground mt-2">
+                Analyzing outfit…
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
         {items.map((item) => (
