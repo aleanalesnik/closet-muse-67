@@ -21,6 +21,7 @@ interface Item {
   mask_path?: string;
   notes?: string;
   created_at: string;
+  yolos_top_labels?: string[];
 }
 
 interface ClosetProps {
@@ -473,6 +474,25 @@ export default function Closet({ user }: ClosetProps) {
                       </Badge>
                     )}
                   </div>
+                  {item.yolos_top_labels && item.yolos_top_labels.length > 0 && (
+                    <div id="yolos-chips" className="flex flex-wrap items-center gap-1 mb-2">
+                      <span className="text-xs text-muted-foreground">AI:</span>
+                      {item.yolos_top_labels
+                        .slice(0, 3)
+                        .map(label => label.toLowerCase().trim())
+                        .filter((label, index, array) => array.indexOf(label) === index)
+                        .map((label, index) => (
+                          <Badge 
+                            key={index} 
+                            variant="outline" 
+                            className="text-xs px-2 py-0.5 bg-muted/50 border-muted-foreground/30 text-muted-foreground"
+                          >
+                            {label}
+                          </Badge>
+                        ))
+                      }
+                    </div>
+                  )}
                   <div className="text-xs text-muted-foreground">
                     Added {new Date(item.created_at).toLocaleDateString()}
                   </div>
