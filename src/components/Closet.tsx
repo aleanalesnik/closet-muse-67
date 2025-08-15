@@ -136,20 +136,21 @@ export default function Closet({ user }: ClosetProps) {
       const { itemId, fn } = await uploadAndProcessItem(file, file.name.split('.')[0]);
       console.log("Upload completed:", { itemId, fn });
       
-      // Update with YOLOS results if available
-      if (!itemId || yolosResult?.status !== "success") {
+      // PRECHECK: Ensure we have required variables
+      const newItemId = itemId;
+      if (!newItemId || !yolosResult || yolosResult.status !== "success") {
         toast({
-          title: "YOLOS not available; item saved without detections.",
+          title: "YOLOS not available; skipping persist.",
         });
       } else {
         try {
-          // Derive top labels (unique, highest score first, max 5)
-          const sorted = [...yolosResult.result].sort((a: any, b: any) => b.score - a.score);
-          const yolosTop = Array.from(new Map(sorted.map((o: any) => [o.label, o])).values())
-            .map((o: any) => o.label)
+          // 1) Compute top labels (unique by label, highest score first, max 5)
+          const sorted = Array.isArray(yolosResult?.result) ? [...yolosResult.result].sort((a: any, b: any) => b.score - a.score) : [];
+          const yolosTop = Array.from(new Map(sorted.map((o: any) => [String(o.label).toLowerCase().trim(), o])).values())
+            .map((o: any) => o.label.toLowerCase().trim())
             .slice(0, 5);
 
-          // Build the UPDATE payload
+          // 2) Build payload
           const payload = {
             yolos_result: yolosResult,
             yolos_latency_ms: yolosResult.latencyMs ?? null,
@@ -157,20 +158,26 @@ export default function Closet({ user }: ClosetProps) {
             yolos_top_labels: yolosTop
           };
 
-          // Update the item with YOLOS results
-          await supabase
+          // 3) Run Supabase UPDATE
+          const { data, error } = await supabase
             .from("items")
             .update(payload)
-            .eq("id", itemId)
-            .select("id")
+            .eq("id", newItemId)
+            .select("id, yolos_top_labels")
             .single();
 
+          // 4) Capture results
+          const rowsUpdated = data ? 1 : 0;
+          const errMsg = error?.message ?? "none";
+
+          // 5) UX feedback
           toast({
-            title: "Saved YOLOS ✓",
+            title: `YOLOS persist → rows:${rowsUpdated} error:${errMsg}`,
           });
-        } catch (yolosUpdateError) {
+        } catch (yolosUpdateError: any) {
+          const errMsg = yolosUpdateError?.message ?? "unknown";
           toast({
-            title: "Couldn't save YOLOS. Item saved without detections.",
+            title: `YOLOS persist → rows:0 error:${errMsg}`,
             variant: "destructive",
           });
         }
