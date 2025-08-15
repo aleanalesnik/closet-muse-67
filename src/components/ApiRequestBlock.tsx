@@ -201,4 +201,109 @@ export const YolosDetectBlock = () => {
   );
 };
 
+// Pre-configured YOLOS Persist block
+export const YolosPersistBlock = () => {
+  const [itemId, setItemId] = useState('');
+
+  return (
+    <div className="space-y-4">
+      <Card className="w-full max-w-2xl">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg font-semibold">YOLOS Persist</CardTitle>
+            <Badge variant="secondary" className="font-mono text-xs">
+              PATCH
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Item ID:</span>
+            <input
+              type="text"
+              value={itemId}
+              onChange={(e) => setItemId(e.target.value)}
+              placeholder="Enter item ID..."
+              className="w-full rounded bg-muted px-2 py-1 text-sm font-mono"
+            />
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            <span className="text-sm font-medium text-muted-foreground">URL:</span>
+            <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
+              https://tqbjbugwwffdfhihpkcg.supabase.co/rest/v1/items?id=eq.{itemId || '{{item_id}}'}
+            </code>
+          </div>
+          
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Headers:</span>
+            <div className="flex items-center space-x-2">
+              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
+                Authorization:
+              </code>
+              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
+                Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA
+              </code>
+            </div>
+            <div className="flex items-center space-x-2">
+              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
+                apikey:
+              </code>
+              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
+                eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA
+              </code>
+            </div>
+            <div className="flex items-center space-x-2">
+              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
+                Content-Type:
+              </code>
+              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
+                application/json
+              </code>
+            </div>
+            <div className="flex items-center space-x-2">
+              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
+                Prefer:
+              </code>
+              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
+                return=representation
+              </code>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Body (JSON):</span>
+            <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+{JSON.stringify({
+  "yolos_result": "{{ blocks.YOLOS_Detect.result | toJson }}",
+  "yolos_top_labels": "{{ blocks.YOLOS_Detect.result | map('label') | unique | slice(0,3) | toJson }}",
+  "yolos_latency_ms": "{{ blocks.YOLOS_Detect.latencyMs }}",
+  "yolos_model": "valentinafeve/yolos-fashionpedia"
+}, null, 2)}
+            </pre>
+          </div>
+        </CardContent>
+      </Card>
+      
+      <ApiRequestBlock
+        name="YOLOS Persist"
+        method="PATCH"
+        url={`https://tqbjbugwwffdfhihpkcg.supabase.co/rest/v1/items?id=eq.${itemId || 'ENTER_ITEM_ID'}`}
+        headers={{
+          "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
+          "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
+          "Content-Type": "application/json",
+          "Prefer": "return=representation"
+        }}
+        body={JSON.stringify({
+          "yolos_result": "{{ blocks.YOLOS_Detect.result | toJson }}",
+          "yolos_top_labels": "{{ blocks.YOLOS_Detect.result | map('label') | unique | slice(0,3) | toJson }}",
+          "yolos_latency_ms": "{{ blocks.YOLOS_Detect.latencyMs }}",
+          "yolos_model": "valentinafeve/yolos-fashionpedia"
+        }, null, 2)}
+      />
+    </div>
+  );
+};
+
 export default ApiRequestBlock;
