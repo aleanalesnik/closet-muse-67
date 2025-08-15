@@ -135,6 +135,46 @@ export default function Closet({ user }: ClosetProps) {
       const { itemId, fn } = await uploadAndProcessItem(file, file.name.split('.')[0]);
       console.log("Upload completed:", { itemId, fn });
       
+      // Update with YOLOS results if available
+      if (!itemId || yolosResult?.status !== "success") {
+        toast({
+          title: "YOLOS not available; item saved without detections.",
+        });
+      } else {
+        try {
+          // Derive top labels (unique, highest score first, max 5)
+          const sorted = [...yolosResult.result].sort((a: any, b: any) => b.score - a.score);
+          const yolosTop = Array.from(new Map(sorted.map((o: any) => [o.label, o])).values())
+            .map((o: any) => o.label)
+            .slice(0, 5);
+
+          // Build the UPDATE payload
+          const payload = {
+            yolos_result: yolosResult,
+            yolos_latency_ms: yolosResult.latencyMs ?? null,
+            yolos_model: "valentinafeve/yolos-fashionpedia",
+            yolos_top_labels: yolosTop
+          };
+
+          // Update the item with YOLOS results
+          await supabase
+            .from("items")
+            .update(payload)
+            .eq("id", itemId)
+            .select("id")
+            .single();
+
+          toast({
+            title: "Saved YOLOS ✓",
+          });
+        } catch (yolosUpdateError) {
+          toast({
+            title: "Couldn't save YOLOS. Item saved without detections.",
+            variant: "destructive",
+          });
+        }
+      }
+      
       // Extract FASHION_SEG status for dev badge
       const fashionSegStatus = fn?.trace?.find((t: any) => t.step === "FASHION_SEG")?.status;
       const devBadge = import.meta.env.DEV && fashionSegStatus ? ` (YOLOS: ${fashionSegStatus})` : "";
