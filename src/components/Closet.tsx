@@ -35,6 +35,7 @@ export default function Closet({ user }: ClosetProps) {
   const [yolosAnalyzing, setYolosAnalyzing] = useState(false);
   const [yolosResult, setYolosResult] = useState<any>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+  const previewImageRef = useRef<HTMLImageElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -109,6 +110,8 @@ export default function Closet({ user }: ClosetProps) {
             latencyMs: yolosLatency
           };
           setYolosResult(yolosResultWithLatency);
+          // Trigger bounding box drawing after setting result
+          setTimeout(() => drawBoundingBoxes(yolosResultWithLatency), 100);
         } else {
           throw new Error('Detection failed');
         }
@@ -159,6 +162,90 @@ export default function Closet({ user }: ClosetProps) {
         fileInputRef.current.value = '';
       }
     }
+  };
+
+  const drawBoundingBoxes = (result: any) => {
+    const overlay = document.getElementById('yolos-overlay');
+    const previewImg = previewImageRef.current;
+    
+    if (!overlay || !previewImg || !result?.result) return;
+    
+    // Clear existing boxes
+    overlay.innerHTML = '';
+    
+    // Wait for image to be loaded if not already
+    const drawBoxes = () => {
+      const natW = previewImg.naturalWidth;
+      const natH = previewImg.naturalHeight;
+      const dispW = previewImg.clientWidth;
+      const dispH = previewImg.clientHeight;
+      
+      if (natW === 0 || natH === 0) {
+        // If naturalWidth/Height not available, create offscreen image
+        const offscreenImg = new Image();
+        offscreenImg.onload = () => {
+          const sx = dispW / offscreenImg.naturalWidth;
+          const sy = dispH / offscreenImg.naturalHeight;
+          renderBoxes(result.result, overlay, sx, sy);
+        };
+        offscreenImg.src = selectedImagePreview!;
+        return;
+      }
+      
+      const sx = dispW / natW;
+      const sy = dispH / natH;
+      renderBoxes(result.result, overlay, sx, sy);
+    };
+    
+    if (previewImg.complete) {
+      drawBoxes();
+    } else {
+      previewImg.onload = drawBoxes;
+    }
+  };
+  
+  const renderBoxes = (detections: any[], overlay: HTMLElement, sx: number, sy: number) => {
+    detections.forEach((detection, idx) => {
+      if (detection.score < 0.50) return;
+      
+      const { box, label, score } = detection;
+      const { xmin, ymin, xmax, ymax } = box;
+      
+      const left = Math.round(xmin * sx);
+      const top = Math.round(ymin * sy);
+      const width = Math.round((xmax - xmin) * sx);
+      const height = Math.round((ymax - ymin) * sy);
+      
+      const boxDiv = document.createElement('div');
+      boxDiv.style.cssText = `
+        position: absolute;
+        left: ${left}px;
+        top: ${top}px;
+        width: ${width}px;
+        height: ${height}px;
+        border: 2px solid rgba(0,0,0,0.9);
+        border-radius: 6px;
+        background: rgba(0,0,0,0.06);
+        pointer-events: none;
+      `;
+      
+      const labelDiv = document.createElement('div');
+      labelDiv.textContent = `${label} ${(score * 100).toFixed(0)}%`;
+      labelDiv.style.cssText = `
+        position: absolute;
+        top: -2px;
+        left: -2px;
+        background: rgba(0,0,0,0.9);
+        color: white;
+        padding: 2px 6px;
+        font-size: 10px;
+        border-radius: 4px 0 4px 0;
+        white-space: nowrap;
+      `;
+      
+      boxDiv.appendChild(labelDiv);
+      overlay.appendChild(boxDiv);
+    });
   };
 
   const handleRetryProcessing = async (itemId: string, imagePath: string) => {
@@ -244,11 +331,18 @@ export default function Closet({ user }: ClosetProps) {
         <div className="mb-8 max-w-md mx-auto">
           <Card className="p-4">
             <div className="relative">
-              <img 
-                src={selectedImagePreview} 
-                alt="Preview" 
-                className="w-full h-64 object-cover rounded"
-              />
+              <div className="relative">
+                <img 
+                  ref={previewImageRef}
+                  src={selectedImagePreview} 
+                  alt="Preview" 
+                  className="w-full h-64 object-cover rounded"
+                />
+                <div 
+                  id="yolos-overlay"
+                  className="absolute left-0 top-0 w-full h-full pointer-events-none"
+                />
+              </div>
               {yolosAnalyzing && (
                 <div className="mt-2 text-sm text-muted-foreground">
                   Analyzing with YOLOS (Supabase)…
