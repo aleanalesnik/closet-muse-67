@@ -187,10 +187,13 @@ export default function Closet({ user }: ClosetProps) {
       const fashionSegStatus = fn?.trace?.find((t: any) => t.step === "FASHION_SEG")?.status;
       const devBadge = import.meta.env.DEV && fashionSegStatus ? ` (YOLOS: ${fashionSegStatus})` : "";
       
+      // DISABLED: Processing started toast
+      /*
       toast({
         title: fn?.ok !== false ? "Processing started" : "Uploaded",
         description: (fn?.ok !== false ? "We're tagging your item…" : "We'll retry processing in the background.") + devBadge
       });
+      */
 
       // Refresh items list to show the new item
       await loadItems();
