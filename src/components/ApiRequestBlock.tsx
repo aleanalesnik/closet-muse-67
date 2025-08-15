@@ -201,6 +201,130 @@ export const YolosDetectBlock = () => {
   );
 };
 
+// Transform block for building YOLOS patch data
+export const BuildYolosPatchBlock = () => {
+  const [detections, setDetections] = useState('[]');
+  const [latency, setLatency] = useState('0');
+  const [itemId, setItemId] = useState('');
+  const [result, setResult] = useState<any>(null);
+
+  const executeTransform = () => {
+    try {
+      // Parse inputs
+      const dets = JSON.parse(detections);
+      const latencyNum = parseFloat(latency);
+      const model = 'valentinafeve/yolos-fashionpedia';
+
+      // Transform code (exactly as provided)
+      const modelName = typeof model === 'string' && model.length
+        ? model
+        : 'valentinafeve/yolos-fashionpedia';
+
+      const detArray = Array.isArray(dets) ? dets : [];
+
+      // Sort by score desc, keep top 5 unique labels
+      const sorted = [...detArray].sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0));
+      const labelsInOrder = sorted.map(d => d?.label).filter(Boolean);
+      const seen = new Set();
+      const topLabels = [];
+      for (const lbl of labelsInOrder) {
+        if (!seen.has(lbl)) {
+          seen.add(lbl);
+          topLabels.push(lbl);
+        }
+        if (topLabels.length >= 5) break;
+      }
+
+      const latencyMs = Number.isFinite(latencyNum) ? Math.max(0, Math.round(latencyNum)) : null;
+
+      const output = {
+        ok: !!itemId && detArray.length >= 0,
+        itemId,
+        patch: {
+          yolos_latency_ms: latencyMs,
+          yolos_model: modelName,
+          yolos_result: detArray,        // jsonb on the DB
+          yolos_top_labels: topLabels // text[] on the DB
+        }
+      };
+
+      setResult(output);
+    } catch (error) {
+      setResult({ error: error instanceof Error ? error.message : 'Transform failed' });
+    }
+  };
+
+  return (
+    <Card className="w-full max-w-2xl">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg font-semibold">Build YOLOS Patch</CardTitle>
+          <Badge variant="secondary" className="font-mono text-xs">
+            Transform
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">detections (from YOLOS Detect result):</span>
+            <Textarea
+              value={detections}
+              onChange={(e) => setDetections(e.target.value)}
+              placeholder="Wire from YOLOS Detect block result array..."
+              className="font-mono text-sm min-h-24"
+            />
+          </div>
+          
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">latency (from YOLOS Detect latency):</span>
+            <input
+              type="text"
+              value={latency}
+              onChange={(e) => setLatency(e.target.value)}
+              placeholder="Wire from YOLOS Detect latency..."
+              className="w-full rounded bg-muted px-2 py-1 text-sm font-mono"
+            />
+          </div>
+          
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">itemId (from Insert Item):</span>
+            <input
+              type="text"
+              value={itemId}
+              onChange={(e) => setItemId(e.target.value)}
+              placeholder="Wire from newly created item ID..."
+              className="w-full rounded bg-muted px-2 py-1 text-sm font-mono"
+            />
+          </div>
+          
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">model (constant):</span>
+            <code className="block rounded bg-muted px-2 py-1 text-sm font-mono">
+              "valentinafeve/yolos-fashionpedia"
+            </code>
+          </div>
+        </div>
+        
+        <div className="flex justify-end">
+          <Button onClick={executeTransform} className="min-w-24">
+            Transform
+          </Button>
+        </div>
+
+        {result && (
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Output:</span>
+            <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
 // Pre-configured YOLOS Persist block
 export const YolosPersistBlock = () => {
   const [itemId, setItemId] = useState('');
