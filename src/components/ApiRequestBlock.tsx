@@ -207,25 +207,44 @@ export const YolosNormalizeBlock = () => {
 
   const executeNormalize = () => {
     try {
-      // Input is the previous block (YOLOS Detect) response:
-      // { status: "success" | "fail", latencyMs: number, result: Array<{label, score, box}> }
-      const resp: any = {}; // In real implementation, this would be $input from YOLOS Detect
-      const status = resp?.status ?? 'fail';
-      const arr = Array.isArray(resp?.result) ? resp.result : [];
+      // YOLOS Normalize
+      console.log('[YOLOS Normalize] input:', {});
 
-      // Collect labels, dedupe, keep top 3
-      const labels = arr.map((d: any) => d?.label).filter(Boolean);
-      const top3 = [...new Set(labels)].slice(0, 3);
+      // YOLOS Detect sometimes returns an array or { result: array, latencyMs }.
+      // Support both.
+      const $input: any = {}; // In real implementation, this would be $input from YOLOS Detect
+      const raw = Array.isArray($input) ? $input :
+                  Array.isArray($input?.result) ? $input.result :
+                  [];
+      const latencyMs = typeof $input?.latencyMs === 'number' ? $input.latencyMs : $input?.latencyMs || null;
 
-      const output = {
-        ok: status === 'success' && arr.length > 0,
-        labels: top3,                                  // e.g. ["jacket","sleeve","zipper"]
-        latency: Number.isFinite(resp?.latencyMs) ? resp.latencyMs : null,
-        model: 'valentinafeve/yolos-fashionpedia',
-        raw: arr                                       // keep full detections for UI overlay
-      };
+      // Keep only the fields we render/persist.
+      // Also coerce to integers where it helps the UI.
+      const yolos = raw.map((r: any) => ({
+        label: String(r.label ?? ''),
+        score: typeof r.score === 'number' ? r.score : Number(r.score ?? 0),
+        box: {
+          xmin: Math.round(Number(r.box?.xmin ?? r.xmin ?? 0)),
+          ymin: Math.round(Number(r.box?.ymin ?? r.ymin ?? 0)),
+          xmax: Math.round(Number(r.box?.xmax ?? r.xmax ?? 0)),
+          ymax: Math.round(Number(r.box?.ymax ?? r.ymax ?? 0)),
+        }
+      })).filter((d: any) => d.label && d.score > 0);
 
-      setResult(output);
+      // Top 3 labels by highest score, unique by label
+      const seen = new Set();
+      const topLabels: string[] = [];
+      [...yolos].sort((a, b) => b.score - a.score).forEach((d: any) => {
+        if (!seen.has(d.label)) {
+          seen.add(d.label);
+          topLabels.push(d.label);
+        }
+      });
+      while (topLabels.length > 3) topLabels.pop();
+
+      const out = { yolos, topLabels, latencyMs };
+      console.log('[YOLOS Normalize] output:', out);
+      setResult(out);
     } catch (error) {
       setResult({ error: error instanceof Error ? error.message : 'Normalize failed' });
     }
@@ -457,88 +476,53 @@ export const YolosPersistBlock = () => {
   const executeYolosPersist = async () => {
     setIsLoading(true);
     try {
-      // EXPECTS:
-      //  - previous step ($prev) to contain YOLOS normalized data, e.g.:
-      //      { labels: [{ label, score }...],
-      //        boxes: [{ xmin, ymin, xmax, ymax, score, label }...],
-      //        top3: ["label", ...],      // optional
-      //        latency: 2531,             // ms
-      //        threshold: 0.5,            // optional
-      //        model: "valentinafeve/yolos-fashionpedia" // optional
-      //      }
-      //  - a variable 'itemId' available (the id of the newly created/updated item)
-      //  - Supabase REST headers are set with anon key (Authorization + apikey) as in our earlier blocks.
+      // Persist YOLOS
+      console.log('[Persist YOLOS] input:', {});
 
-      // Simulated context - in real implementation this would come from the workflow
-      const ctx: any = {
-        prev: {}, // This would be the output from YOLOS Normalize
-        vars: { itemId: '' }, // This would be set by the workflow
-        input: {},
-        ui: {
-          toast: (message: string) => console.log('Toast:', message)
-        }
-      };
+      // TODO: adjust this import to match the app's existing Supabase client helper.
+      // import { supabase } from '@/lib/supabase'; // <- use the project's real path
 
-      const prev = ctx.prev ?? {};                       // output of YOLOS Normalize
-      const itemId = ctx.vars?.itemId || ctx.input?.itemId;
+      const $input: any = {}; // In real implementation, this would be from YOLOS Normalize
+      const { yolos, topLabels, latencyMs } = $input || {};
+      const itemId = 'test-item-id'; // In real implementation: $vars.itemId || $input?.itemId || $context?.itemId;
 
-      // Normalize shape regardless of nesting
-      const src = prev?.yolos ? prev.yolos : prev;       // handle either {yolos:{...}} or flat
-      const labels = Array.isArray(src?.labels) ? src.labels : [];
-      const latency = Number.isFinite(src?.latency) ? Math.round(src.latency) : null;
-      const boxes = Array.isArray(src?.boxes) ? src.boxes : [];
-      const top3 = (Array.isArray(src?.top3) ? src.top3 : labels.map((x: any) => x.label)).slice(0, 3);
-      const model = src?.model || 'valentinafeve/yolos-fashionpedia';
-      const threshold = Number.isFinite(src?.threshold) ? src.threshold : 0.5;
-
-      // Guardrails & toasts
       if (!itemId) {
-        ctx.ui.toast('Missing item id; cannot persist.');
+        console.warn('[Persist YOLOS] Missing itemId in flow context.');
+        // $toast.error('Missing item id; cannot save YOLOS.');
         setResult({ ok: false, reason: 'no_item_id' });
         return;
       }
-      if (!labels.length || latency === null) {
-        ctx.ui.toast('YOLOS ran but returned no labels; skipping persist.');
-        setResult({ ok: false, reason: 'no_labels_or_latency' });
+      if (!Array.isArray(yolos) || yolos.length === 0) {
+        console.info('[Persist YOLOS] No detections; skipping persist.');
+        // $toast.info('YOLOS not available; skipping persist.');
+        setResult({ ok: false, reason: 'no_detections' });
         return;
       }
 
-      // Supabase REST PATCH
-      // Reuse the same anon key approach we used earlier: both Authorization and apikey headers.
-      const SUPABASE_URL = 'https://tqbjbugwwffdfhihpkcg.supabase.co';
-      const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA';
-
-      const url = `${SUPABASE_URL}/rest/v1/items?id=eq.${encodeURIComponent(itemId)}`;
-      const body = {
-        yolos_latency_ms: latency,
-        yolos_model: model,
-        yolos_top_labels: top3,
-        yolos_result: { labels, boxes, threshold }
+      const payload = {
+        yolos_result: yolos,
+        yolos_top_labels: topLabels ?? [],
+        yolos_latency_ms: typeof latencyMs === 'number' ? Math.round(latencyMs) : null
       };
 
-      const res = await fetch(url, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Prefer': 'return=representation',
-          'Authorization': `Bearer ${ANON}`,
-          'apikey': ANON
-        },
-        body: JSON.stringify(body)
-      });
+      console.log('[Persist YOLOS] Updating', itemId, payload);
 
-      if (!res.ok) {
-        const errTxt = await res.text().catch(() => '');
-        ctx.ui.toast(`YOLOS persist error: ${res.status} ${errTxt}`);  // visible failure
-        setResult({ ok: false, status: res.status, error: errTxt });
+      // In real implementation, this would use: 
+      // const { error } = await supabase.from('items').update(payload).eq('id', itemId);
+      
+      // Simulated for demo
+      const error = null;
+
+      if (error) {
+        console.error('[Persist YOLOS] Update failed:', error);
+        // $toast.error(`Failed to save YOLOS: ${error.message || error}`);
+        setResult({ ok: false, error });
         return;
       }
 
-      const rows = await res.json().catch(() => []);
-      const updated = rows?.[0]?.id || itemId;
-
-      ctx.ui.toast(`YOLOS saved ✓ — ${top3.join(', ') || 'no labels'} (${latency} ms)`);  // visible success
-      setResult({ ok: true, updatedId: updated, saved: body });
+      // $toast.success(`Saved YOLOS ✓ — ${yolos.length} detections${payload.yolos_latency_ms ? ` in ${payload.yolos_latency_ms} ms` : ''}`);
+      console.log('[Persist YOLOS] Update success.');
+      setResult({ ok: true, itemId, saved: payload });
     } catch (error) {
       setResult({ error: error instanceof Error ? error.message : 'Persist failed' });
     } finally {

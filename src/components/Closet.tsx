@@ -136,48 +136,95 @@ export default function Closet({ user }: ClosetProps) {
       const { itemId, fn } = await uploadAndProcessItem(file, file.name.split('.')[0]);
       console.log("Upload completed:", { itemId, fn });
       
-      // PRECHECK: Ensure we have required variables
+      // YOLOS Normalize and Persist - use the new blocks
       const newItemId = itemId;
+      
       if (!newItemId || !yolosResult || yolosResult.status !== "success") {
         toast({
           title: "YOLOS not available; skipping persist.",
         });
       } else {
         try {
-          // 1) Compute top labels (unique by label, highest score first, max 5)
-          const sorted = Array.isArray(yolosResult?.result) ? [...yolosResult.result].sort((a: any, b: any) => b.score - a.score) : [];
-          const yolosTop = Array.from(new Map(sorted.map((o: any) => [String(o.label).toLowerCase().trim(), o])).values())
-            .map((o: any) => o.label.toLowerCase().trim())
-            .slice(0, 5);
+          // YOLOS Normalize
+          console.log('[YOLOS Normalize] input:', yolosResult);
 
-          // 2) Build payload
+          // YOLOS Detect sometimes returns an array or { result: array, latencyMs }.
+          // Support both.
+          const raw = Array.isArray(yolosResult) ? yolosResult :
+                      Array.isArray(yolosResult?.result) ? yolosResult.result :
+                      [];
+          const latencyMs = typeof yolosResult?.latencyMs === 'number' ? yolosResult.latencyMs : yolosResult?.latencyMs || null;
+
+          // Keep only the fields we render/persist.
+          // Also coerce to integers where it helps the UI.
+          const yolos = raw.map((r: any) => ({
+            label: String(r.label ?? ''),
+            score: typeof r.score === 'number' ? r.score : Number(r.score ?? 0),
+            box: {
+              xmin: Math.round(Number(r.box?.xmin ?? r.xmin ?? 0)),
+              ymin: Math.round(Number(r.box?.ymin ?? r.ymin ?? 0)),
+              xmax: Math.round(Number(r.box?.xmax ?? r.xmax ?? 0)),
+              ymax: Math.round(Number(r.box?.ymax ?? r.ymax ?? 0)),
+            }
+          })).filter((d: any) => d.label && d.score > 0);
+
+          // Top 3 labels by highest score, unique by label
+          const seen = new Set();
+          const topLabels: string[] = [];
+          [...yolos].sort((a, b) => b.score - a.score).forEach((d: any) => {
+            if (!seen.has(d.label)) {
+              seen.add(d.label);
+              topLabels.push(d.label);
+            }
+          });
+          while (topLabels.length > 3) topLabels.pop();
+
+          const normalizedOutput = { yolos, topLabels, latencyMs };
+          console.log('[YOLOS Normalize] output:', normalizedOutput);
+
+          // Persist YOLOS
+          console.log('[Persist YOLOS] input:', normalizedOutput);
+
+          const { yolos: persistYolos, topLabels: persistTopLabels, latencyMs: persistLatencyMs } = normalizedOutput || {};
+
+          if (!Array.isArray(persistYolos) || persistYolos.length === 0) {
+            console.info('[Persist YOLOS] No detections; skipping persist.');
+            toast({
+              title: 'YOLOS not available; skipping persist.',
+            });
+            return;
+          }
+
           const payload = {
-            yolos_result: yolosResult,
-            yolos_latency_ms: yolosResult.latencyMs ?? null,
-            yolos_model: "valentinafeve/yolos-fashionpedia",
-            yolos_top_labels: yolosTop
+            yolos_result: persistYolos,
+            yolos_top_labels: persistTopLabels ?? [],
+            yolos_latency_ms: typeof persistLatencyMs === 'number' ? Math.round(persistLatencyMs) : null
           };
 
-          // 3) Run Supabase UPDATE
-          const { data, error } = await supabase
-            .from("items")
+          console.log('[Persist YOLOS] Updating', newItemId, payload);
+
+          const { error } = await supabase
+            .from('items')
             .update(payload)
-            .eq("id", newItemId)
-            .select("id, yolos_top_labels")
-            .single();
+            .eq('id', newItemId);
 
-          // 4) Capture results
-          const rowsUpdated = data ? 1 : 0;
-          const errMsg = error?.message ?? "none";
+          if (error) {
+            console.error('[Persist YOLOS] Update failed:', error);
+            toast({
+              title: `Failed to save YOLOS: ${error.message || error}`,
+              variant: 'destructive'
+            });
+            return;
+          }
 
-          // 5) UX feedback
           toast({
-            title: `YOLOS persist → rows:${rowsUpdated} error:${errMsg}`,
+            title: `Saved YOLOS ✓ — ${persistYolos.length} detections${payload.yolos_latency_ms ? ` in ${payload.yolos_latency_ms} ms` : ''}`,
           });
+          console.log('[Persist YOLOS] Update success.');
         } catch (yolosUpdateError: any) {
-          const errMsg = yolosUpdateError?.message ?? "unknown";
+          console.error('[Persist YOLOS] Error:', yolosUpdateError);
           toast({
-            title: `YOLOS persist → rows:0 error:${errMsg}`,
+            title: `Failed to save YOLOS: ${yolosUpdateError.message || 'unknown'}`,
             variant: "destructive",
           });
         }
