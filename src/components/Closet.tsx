@@ -48,7 +48,7 @@ export default function Closet({ user }: ClosetProps) {
     try {
       const { data, error } = await supabase
         .from('items')
-        .select('*')
+        .select('*, yolos_top_labels, yolos_result, yolos_latency_ms, yolos_model')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -341,6 +341,14 @@ export default function Closet({ user }: ClosetProps) {
   }, [items]);
 
   return (
+    <>
+      <style>{`
+        .ai-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; align-items:center; }
+        .ai-kicker { font-size:12px; line-height:18px; padding:2px 6px; border-radius:9999px;
+                     background:#4f46e5; color:white; font-weight:600; }
+        .ai-chip { font-size:12px; line-height:18px; padding:2px 8px; border-radius:9999px;
+                   border:1px dashed #818cf8; color:#4f46e5; background:#eef2ff; }
+      `}</style>
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -414,93 +422,89 @@ export default function Closet({ user }: ClosetProps) {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-        {items.map((item) => (
-          <div key={item.id} className="relative group">
-            <Link to={`/item/${item.id}`} className="block">
-              <Card className="overflow-hidden hover:shadow-lg transition-shadow">
-                <div className="aspect-square relative">
-                  {processing.has(item.id) && (
-                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10 rounded-t-lg">
-                      <Loader2 className="h-8 w-8 animate-spin text-white" />
-                    </div>
-                  )}
-                  <img 
-                    src={signedUrls[item.image_path] || "/placeholder.svg"} 
-                    alt={item.title || 'Closet item'}
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button 
-                          variant="secondary" 
-                          size="sm" 
-                          className="h-8 w-8 p-0"
-                          onClick={(e) => e.preventDefault()} // Prevent Link navigation
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem 
-                          onClick={(e) => {
-                            e.preventDefault();
-                            handleRetryProcessing(item.id, item.image_path);
-                          }}
-                          disabled={processing.has(item.id)}
-                        >
-                          {processing.has(item.id) ? 'Processing...' : 'Retry processing'}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </div>
-                <CardContent className="p-4">
-                  <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
-                  <div className="flex flex-wrap gap-1 mb-2">
-                    {item.category && (
-                      <Badge variant="secondary" className="text-xs">
-                        {item.category}
-                      </Badge>
+        {items.map((item) => {
+          // Compute AI labels safely
+          const aiLabels = Array.isArray(item.yolos_top_labels)
+            ? [...new Set(item.yolos_top_labels.filter(Boolean).map(s => String(s).trim().toLowerCase()))]
+            : [];
+
+          return (
+            <div key={item.id} className="relative group">
+              <Link to={`/item/${item.id}`} className="block">
+                <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+                  <div className="aspect-square relative">
+                    {processing.has(item.id) && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10 rounded-t-lg">
+                        <Loader2 className="h-8 w-8 animate-spin text-white" />
+                      </div>
                     )}
-                    {item.subcategory && (
-                      <Badge variant="outline" className="text-xs">
-                        {item.subcategory}
-                      </Badge>
-                    )}
-                    {item.color_name && (
-                      <Badge variant="outline" className="text-xs">
-                        {item.color_name}
-                      </Badge>
-                    )}
-                  </div>
-                  {item.yolos_top_labels && item.yolos_top_labels.length > 0 && (
-                    <div id="yolos-chips" className="flex flex-wrap items-center gap-1 mb-2">
-                      <span className="text-xs text-muted-foreground">AI:</span>
-                      {item.yolos_top_labels
-                        .slice(0, 3)
-                        .map(label => label.toLowerCase().trim())
-                        .filter((label, index, array) => array.indexOf(label) === index)
-                        .map((label, index) => (
-                          <Badge 
-                            key={index} 
-                            variant="outline" 
-                            className="text-xs px-2 py-0.5 bg-muted/50 border-muted-foreground/30 text-muted-foreground"
+                    <img 
+                      src={signedUrls[item.image_path] || "/placeholder.svg"} 
+                      alt={item.title || 'Closet item'}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button 
+                            variant="secondary" 
+                            size="sm" 
+                            className="h-8 w-8 p-0"
+                            onClick={(e) => e.preventDefault()} // Prevent Link navigation
                           >
-                            {label}
-                          </Badge>
-                        ))
-                      }
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem 
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleRetryProcessing(item.id, item.image_path);
+                            }}
+                            disabled={processing.has(item.id)}
+                          >
+                            {processing.has(item.id) ? 'Processing...' : 'Retry processing'}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
-                  )}
-                  <div className="text-xs text-muted-foreground">
-                    Added {new Date(item.created_at).toLocaleDateString()}
                   </div>
-                </CardContent>
-              </Card>
-            </Link>
-          </div>
-        ))}
+                  <CardContent className="p-4">
+                    <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {item.category && (
+                        <Badge variant="secondary" className="text-xs">
+                          {item.category}
+                        </Badge>
+                      )}
+                      {item.subcategory && (
+                        <Badge variant="outline" className="text-xs">
+                          {item.subcategory}
+                        </Badge>
+                      )}
+                      {item.color_name && (
+                        <Badge variant="outline" className="text-xs">
+                          {item.color_name}
+                        </Badge>
+                      )}
+                    </div>
+                    {aiLabels.length > 0 && (
+                      <div className="ai-row" data-testid="ai-chips">
+                        <span className="ai-kicker">AI</span>
+                        {aiLabels.slice(0, 3).map(label => (
+                          <span key={label} className="ai-chip">{label}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="text-xs text-muted-foreground">
+                      Added {new Date(item.created_at).toLocaleDateString()}
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            </div>
+          );
+        })}
       </div>
 
       {items.length === 0 && (
@@ -521,5 +525,6 @@ export default function Closet({ user }: ClosetProps) {
         </div>
       )}
     </div>
+    </>
   );
 }
