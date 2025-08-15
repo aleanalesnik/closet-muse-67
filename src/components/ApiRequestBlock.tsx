@@ -207,46 +207,22 @@ export const YolosNormalizeBlock = () => {
 
   const executeNormalize = () => {
     try {
-      // Read the raw output from YOLOS Detect (adapt if your block name differs)
-      const detect: any = {}; // In real implementation, this would be wired from YOLOS Detect
-      
-      // Try common locations where Lovable/fetch may put JSON
-      const raw = detect?.body ?? detect?.data ?? detect?.result ?? detect;
+      // Input is the previous block (YOLOS Detect) response:
+      // { status: "success" | "fail", latencyMs: number, result: Array<{label, score, box}> }
+      const resp: any = {}; // In real implementation, this would be $input from YOLOS Detect
+      const status = resp?.status ?? 'fail';
+      const arr = Array.isArray(resp?.result) ? resp.result : [];
 
-      // Find an array of detections no matter the key name
-      let result =
-        Array.isArray(raw) ? raw :
-        raw?.result ?? raw?.results ?? raw?.outputs ?? raw?.detections ?? null;
-
-      // Pull a latency if present (best-effort)
-      const latency =
-        raw?.latencyMs ?? raw?.latency ??
-        detect?.headers?.['x-exec-time'] ?? null;
-
-      // Build top labels safely
-      let labels = [];
-      if (Array.isArray(result)) {
-        labels = [...new Set(
-          result
-            .filter(r => r && typeof r.label === 'string')
-            .sort((a,b) => (b?.score ?? 0) - (a?.score ?? 0))
-            .slice(0, 3)
-            .map(r => r.label.toLowerCase())
-        )];
-      }
-
-      // Tiny preview for debugging in toast (avoid 50k char overflow)
-      const bodyPreview = (() => {
-        try { return JSON.stringify(raw).slice(0, 240) + '…'; }
-        catch { return '[unserializable body]'; }
-      })();
+      // Collect labels, dedupe, keep top 3
+      const labels = arr.map((d: any) => d?.label).filter(Boolean);
+      const top3 = [...new Set(labels)].slice(0, 3);
 
       const output = {
-        available: Array.isArray(result) && result.length > 0,
-        result,
-        labels,
-        latency,
-        bodyPreview
+        ok: status === 'success' && arr.length > 0,
+        labels: top3,                                  // e.g. ["jacket","sleeve","zipper"]
+        latency: Number.isFinite(resp?.latencyMs) ? resp.latencyMs : null,
+        model: 'valentinafeve/yolos-fashionpedia',
+        raw: arr                                       // keep full detections for UI overlay
       };
 
       setResult(output);
