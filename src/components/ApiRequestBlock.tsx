@@ -327,7 +327,56 @@ export const BuildYolosPatchBlock = () => {
 
 // Pre-configured YOLOS Persist block
 export const YolosPersistBlock = () => {
-  const [itemId, setItemId] = useState('');
+  const [patchData, setPatchData] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [response, setResponse] = useState<any>(null);
+  const [latency, setLatency] = useState<number | null>(null);
+
+  const handleExecute = async () => {
+    if (!patchData?.ok || !patchData?.itemId) {
+      // Show skip toast
+      return;
+    }
+
+    setIsLoading(true);
+    const startTime = Date.now();
+    
+    try {
+      const fetchOptions: RequestInit = {
+        method: 'PATCH',
+        headers: {
+          "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
+          "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
+          "Content-Type": "application/json",
+          "Prefer": "return=representation"
+        },
+        body: JSON.stringify(patchData.patch)
+      };
+      
+      const url = `https://tqbjbugwwffdfhihpkcg.supabase.co/rest/v1/items?id=eq.${patchData.itemId}`;
+      const res = await fetch(url, fetchOptions);
+      const endTime = Date.now();
+      setLatency(endTime - startTime);
+      
+      const responseData = await res.json();
+      setResponse(responseData);
+      
+      if (res.ok) {
+        // Success toast would be shown here
+        console.log(`AI ✓ saved ${patchData.patch.yolos_top_labels?.length || 0} tags in ${patchData.patch.yolos_latency_ms || 0} ms`);
+      } else {
+        // Error toast would be shown here
+        console.error(`YOLOS persist failed — ${res.status}`);
+      }
+    } catch (error) {
+      const endTime = Date.now();
+      setLatency(endTime - startTime);
+      setResponse({ error: error instanceof Error ? error.message : 'Unknown error' });
+      console.error('YOLOS persist failed —', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -342,20 +391,25 @@ export const YolosPersistBlock = () => {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <span className="text-sm font-medium text-muted-foreground">Item ID:</span>
-            <input
-              type="text"
-              value={itemId}
-              onChange={(e) => setItemId(e.target.value)}
-              placeholder="Enter item ID..."
-              className="w-full rounded bg-muted px-2 py-1 text-sm font-mono"
+            <span className="text-sm font-medium text-muted-foreground">Patch Data (from Build YOLOS Patch):</span>
+            <Textarea
+              value={JSON.stringify(patchData, null, 2)}
+              onChange={(e) => {
+                try {
+                  setPatchData(JSON.parse(e.target.value));
+                } catch {
+                  // Invalid JSON, ignore
+                }
+              }}
+              placeholder="Wire from Build YOLOS Patch block output..."
+              className="font-mono text-sm min-h-32"
             />
           </div>
           
           <div className="flex items-center space-x-2">
             <span className="text-sm font-medium text-muted-foreground">URL:</span>
             <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
-              https://tqbjbugwwffdfhihpkcg.supabase.co/rest/v1/items?id=eq.{itemId || '{{item_id}}'}
+              https://tqbjbugwwffdfhihpkcg.supabase.co/rest/v1/items?id=eq.{patchData?.itemId || '{{itemId}}'}
             </code>
           </div>
           
@@ -396,36 +450,39 @@ export const YolosPersistBlock = () => {
           </div>
 
           <div className="space-y-2">
-            <span className="text-sm font-medium text-muted-foreground">Body (JSON):</span>
+            <span className="text-sm font-medium text-muted-foreground">Body (JSON from patch):</span>
             <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap">
-{JSON.stringify({
-  "yolos_result": "{{ blocks.YOLOS_Detect.result | toJson }}",
-  "yolos_top_labels": "{{ blocks.YOLOS_Detect.result | map('label') | unique | slice(0,3) | toJson }}",
-  "yolos_latency_ms": "{{ blocks.YOLOS_Detect.latencyMs }}",
-  "yolos_model": "valentinafeve/yolos-fashionpedia"
-}, null, 2)}
+              {patchData?.patch ? JSON.stringify(patchData.patch, null, 2) : 'Waiting for patch data...'}
             </pre>
           </div>
+          
+          <div className="flex justify-end">
+            <Button 
+              onClick={handleExecute}
+              disabled={isLoading || !patchData?.ok || !patchData?.itemId}
+              className="min-w-24"
+            >
+              {isLoading ? 'Persisting...' : 'Persist'}
+            </Button>
+          </div>
+
+          {response && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-muted-foreground">Response:</span>
+                {latency && (
+                  <Badge variant="outline" className="text-xs">
+                    {latency}ms
+                  </Badge>
+                )}
+              </div>
+              <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
+                {JSON.stringify(response, null, 2)}
+              </pre>
+            </div>
+          )}
         </CardContent>
       </Card>
-      
-      <ApiRequestBlock
-        name="YOLOS Persist"
-        method="PATCH"
-        url={`https://tqbjbugwwffdfhihpkcg.supabase.co/rest/v1/items?id=eq.${itemId || 'ENTER_ITEM_ID'}`}
-        headers={{
-          "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
-          "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
-          "Content-Type": "application/json",
-          "Prefer": "return=representation"
-        }}
-        body={JSON.stringify({
-          "yolos_result": "{{ blocks.YOLOS_Detect.result | toJson }}",
-          "yolos_top_labels": "{{ blocks.YOLOS_Detect.result | map('label') | unique | slice(0,3) | toJson }}",
-          "yolos_latency_ms": "{{ blocks.YOLOS_Detect.latencyMs }}",
-          "yolos_model": "valentinafeve/yolos-fashionpedia"
-        }, null, 2)}
-      />
     </div>
   );
 };
