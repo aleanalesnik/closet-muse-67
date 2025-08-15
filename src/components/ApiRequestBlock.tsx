@@ -2,24 +2,49 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 
 interface ApiRequestBlockProps {
   name: string;
   method: string;
   url: string;
   headers?: Record<string, string>;
+  body?: string;
   onExecute?: () => void;
 }
 
-const ApiRequestBlock: React.FC<ApiRequestBlockProps> = ({ name, method, url, headers, onExecute }) => {
+const ApiRequestBlock: React.FC<ApiRequestBlockProps> = ({ name, method, url, headers, body, onExecute }) => {
   const [isLoading, setIsLoading] = useState(false);
+  const [response, setResponse] = useState<any>(null);
+  const [latency, setLatency] = useState<number | null>(null);
 
   const handleExecute = async () => {
     setIsLoading(true);
+    const startTime = Date.now();
     try {
+      const fetchOptions: RequestInit = {
+        method,
+        headers: headers || {},
+      };
+      
+      if (body && method !== 'GET') {
+        fetchOptions.body = body;
+      }
+      
+      const res = await fetch(url, fetchOptions);
+      const endTime = Date.now();
+      setLatency(endTime - startTime);
+      
+      const responseData = await res.json();
+      setResponse(responseData);
+      
       if (onExecute) {
         onExecute();
       }
+    } catch (error) {
+      const endTime = Date.now();
+      setLatency(endTime - startTime);
+      setResponse({ error: error instanceof Error ? error.message : 'Unknown error' });
     } finally {
       setIsLoading(false);
     }
@@ -58,6 +83,15 @@ const ApiRequestBlock: React.FC<ApiRequestBlockProps> = ({ name, method, url, he
             ))}
           </div>
         )}
+
+        {body && (
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Body (RAW JSON):</span>
+            <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap">
+              {body}
+            </pre>
+          </div>
+        )}
         
         <div className="flex justify-end">
           <Button 
@@ -65,27 +99,105 @@ const ApiRequestBlock: React.FC<ApiRequestBlockProps> = ({ name, method, url, he
             disabled={isLoading}
             className="min-w-24"
           >
-            {isLoading ? 'Loading...' : 'Execute'}
+            {isLoading ? 'Loading...' : 'Test'}
           </Button>
         </div>
+
+        {response && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-muted-foreground">Response:</span>
+              {latency && (
+                <Badge variant="outline" className="text-xs">
+                  {latency}ms
+                </Badge>
+              )}
+            </div>
+            <pre className="rounded bg-muted p-3 text-sm font-mono overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto">
+              {JSON.stringify(response, null, 2)}
+            </pre>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
 };
 
-// Pre-configured YOLOS Detect block
+// Pre-configured YOLOS Detect block with editable body
 export const YolosDetectBlock = () => {
+  const [body, setBody] = useState('');
+
   return (
-    <ApiRequestBlock
-      name="YOLOS Detect"
-      method="POST"
-      url="https://tqbjbugwwffdfhihpkcg.functions.supabase.co/sila-model-debugger"
-      headers={{
-        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
-        "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
-        "Content-Type": "application/json"
-      }}
-    />
+    <div className="space-y-4">
+      <Card className="w-full max-w-2xl">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg font-semibold">YOLOS Detect</CardTitle>
+            <Badge variant="secondary" className="font-mono text-xs">
+              POST
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center space-x-2">
+            <span className="text-sm font-medium text-muted-foreground">URL:</span>
+            <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
+              https://tqbjbugwwffdfhihpkcg.functions.supabase.co/sila-model-debugger
+            </code>
+          </div>
+          
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Headers:</span>
+            <div className="flex items-center space-x-2">
+              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
+                Authorization:
+              </code>
+              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
+                Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA
+              </code>
+            </div>
+            <div className="flex items-center space-x-2">
+              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
+                apikey:
+              </code>
+              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
+                eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA
+              </code>
+            </div>
+            <div className="flex items-center space-x-2">
+              <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-medium">
+                Content-Type:
+              </code>
+              <code className="flex-1 rounded bg-muted px-2 py-1 text-sm font-mono">
+                application/json
+              </code>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-sm font-medium text-muted-foreground">Body (RAW JSON):</span>
+            <Textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Paste your JSON here..."
+              className="font-mono text-sm min-h-32"
+            />
+          </div>
+        </CardContent>
+      </Card>
+      
+      <ApiRequestBlock
+        name="YOLOS Detect"
+        method="POST"
+        url="https://tqbjbugwwffdfhihpkcg.functions.supabase.co/sila-model-debugger"
+        headers={{
+          "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
+          "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA",
+          "Content-Type": "application/json"
+        }}
+        body={body}
+      />
+    </div>
   );
 };
 
