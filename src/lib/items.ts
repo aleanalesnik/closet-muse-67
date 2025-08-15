@@ -34,6 +34,7 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   if (insErr) throw insErr;
 
   const itemId = inserted.id as string;
+  console.log('[SILA] UPLOAD PATH ACTIVE', { itemId });
 
   // 5) call Edge Function with debug in development
   const { data: fnData, error: fnErr } = await supabase.functions
