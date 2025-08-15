@@ -74,160 +74,80 @@ export default function Closet({ user }: ClosetProps) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Convert image to data URL for YOLOS detection
+    // Set preview for UI
     const reader = new FileReader();
-    reader.onload = async (e) => {
-      const newItemImageDataURL = e.target?.result as string;
-      setSelectedImagePreview(newItemImageDataURL);
-      
-      // Call YOLOS Detect API immediately after file selection
-      setYolosAnalyzing(true);
-      setYolosResult(null);
-      
-      const yolosStartTime = Date.now();
-      
-      try {
-        const yolosBody = {
-          "base64Image": newItemImageDataURL,
-          "threshold": 0.5
-        };
-
-        const response = await fetch('https://tqbjbugwwffdfhihpkcg.functions.supabase.co/sila-model-debugger', {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA',
-            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(yolosBody)
-        });
-
-        const yolosLatency = Date.now() - yolosStartTime;
-        const responseData = await response.json();
-        
-        if (response.ok && responseData.status === "success") {
-          const yolosResultWithLatency = {
-            ...responseData,
-            latencyMs: yolosLatency
-          };
-          setYolosResult(yolosResultWithLatency);
-          // Trigger bounding box drawing after setting result
-          setTimeout(() => drawBoundingBoxes(yolosResultWithLatency), 100);
-        } else {
-          throw new Error('Detection failed');
-        }
-      } catch (error) {
-        toast({
-          title: "YOLOS call failed. Please try again.",
-          variant: "destructive"
-        });
-        setYolosResult({ error: true });
-      } finally {
-        setYolosAnalyzing(false);
-      }
+    reader.onload = (e) => {
+      setSelectedImagePreview(e.target?.result as string);
     };
-    
     reader.readAsDataURL(file);
 
     // Continue with existing upload flow
     setUploading(true);
     try {
       console.log("Starting upload for file:", file.name);
-      const { itemId, fn } = await uploadAndProcessItem(file, file.name.split('.')[0]);
-      console.log("Upload completed:", { itemId, fn });
+      const { itemId, imagePath, fn } = await uploadAndProcessItem(file, file.name.split('.')[0]);
+      console.log("Upload completed:", { itemId, imagePath, fn });
       
-      // YOLOS Normalize and Persist - use the new blocks
-      const newItemId = itemId;
+      // Call YOLOS with public URL after upload
+      setYolosAnalyzing(true);
+      setYolosResult(null);
       
-      if (!newItemId || !yolosResult || yolosResult.status !== "success") {
-        toast({
-          title: "YOLOS not available; skipping persist.",
+      try {
+        // Get public URL for the uploaded image using the actual imagePath
+        const { data: pub } = supabase.storage.from('sila').getPublicUrl(imagePath);
+        const imageUrl = pub.publicUrl;
+        
+        const fnUrl = `https://tqbjbugwwffdfhihpkcg.functions.supabase.co/sila-model-debugger`;
+        const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA';
+
+        const detectRes = await fetch(fnUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${ANON}`,
+            'apikey': ANON,
+          },
+          body: JSON.stringify({ imageUrl, threshold: 0.5 }),
         });
-      } else {
-        try {
-          // YOLOS Normalize
-          console.log('[YOLOS Normalize] input:', yolosResult);
+        const detectJson = await detectRes.json();
+        console.log('[YOLOS Normalize] output:', detectJson);
 
-          // YOLOS Detect sometimes returns an array or { result: array, latencyMs }.
-          // Support both.
-          const raw = Array.isArray(yolosResult) ? yolosResult :
-                      Array.isArray(yolosResult?.result) ? yolosResult.result :
-                      [];
-          const latencyMs = typeof yolosResult?.latencyMs === 'number' ? yolosResult.latencyMs : yolosResult?.latencyMs || null;
+        if (!detectRes.ok || detectJson?.status !== 'success') {
+          toast({ title: 'YOLOS not available; skipping persist.' });
+          setYolosResult({ error: true });
+        } else {
+          setYolosResult(detectJson);
+          // Trigger bounding box drawing after setting result
+          setTimeout(() => drawBoundingBoxes(detectJson), 100);
 
-          // Keep only the fields we render/persist.
-          // Also coerce to integers where it helps the UI.
-          const yolos = raw.map((r: any) => ({
-            label: String(r.label ?? ''),
-            score: typeof r.score === 'number' ? r.score : Number(r.score ?? 0),
-            box: {
-              xmin: Math.round(Number(r.box?.xmin ?? r.xmin ?? 0)),
-              ymin: Math.round(Number(r.box?.ymin ?? r.ymin ?? 0)),
-              xmax: Math.round(Number(r.box?.xmax ?? r.xmax ?? 0)),
-              ymax: Math.round(Number(r.box?.ymax ?? r.ymax ?? 0)),
-            }
-          })).filter((d: any) => d.label && d.score > 0);
+          // Persist to public.items
+          const results = detectJson.result as Array<{label:string; score:number; box:any}>;
+          const top = results.slice(0, 3).map(r => r.label);
 
-          // Top 3 labels by highest score, unique by label
-          const seen = new Set();
-          const topLabels: string[] = [];
-          [...yolos].sort((a, b) => b.score - a.score).forEach((d: any) => {
-            if (!seen.has(d.label)) {
-              seen.add(d.label);
-              topLabels.push(d.label);
-            }
-          });
-          while (topLabels.length > 3) topLabels.pop();
-
-          const normalizedOutput = { yolos, topLabels, latencyMs };
-          console.log('[YOLOS Normalize] output:', normalizedOutput);
-
-          // Persist YOLOS
-          console.log('[Persist YOLOS] input:', normalizedOutput);
-
-          const { yolos: persistYolos, topLabels: persistTopLabels, latencyMs: persistLatencyMs } = normalizedOutput || {};
-
-          if (!Array.isArray(persistYolos) || persistYolos.length === 0) {
-            console.info('[Persist YOLOS] No detections; skipping persist.');
-            toast({
-              title: 'YOLOS not available; skipping persist.',
-            });
-            return;
-          }
-
-          const payload = {
-            yolos_result: persistYolos,
-            yolos_top_labels: persistTopLabels ?? [],
-            yolos_latency_ms: typeof persistLatencyMs === 'number' ? Math.round(persistLatencyMs) : null
-          };
-
-          console.log('[Persist YOLOS] Updating', newItemId, payload);
-
-          const { error } = await supabase
+          const { error: updErr } = await supabase
             .from('items')
-            .update(payload)
-            .eq('id', newItemId);
+            .update({
+              yolos_latency_ms: detectJson.latencyMs ?? null,
+              yolos_model: detectJson.model ?? 'valentinafeve/yolos-fashionpedia',
+              yolos_result: results,             // jsonb
+              yolos_top_labels: top,             // text[]
+            })
+            .eq('id', itemId);
 
-          if (error) {
-            console.error('[Persist YOLOS] Update failed:', error);
-            toast({
-              title: `Failed to save YOLOS: ${error.message || error}`,
-              variant: 'destructive'
-            });
-            return;
+          if (updErr) {
+            console.error('[Persist YOLOS] error:', updErr);
+            toast({ title: 'Saved image, but failed to persist YOLOS.', variant: 'destructive' });
+          } else {
+            console.log('[Persist YOLOS] Update success.');
+            toast({ title: 'YOLOS tags saved.' });
           }
-
-          toast({
-            title: `Saved YOLOS ✓ — ${persistYolos.length} detections${payload.yolos_latency_ms ? ` in ${payload.yolos_latency_ms} ms` : ''}`,
-          });
-          console.log('[Persist YOLOS] Update success.');
-        } catch (yolosUpdateError: any) {
-          console.error('[Persist YOLOS] Error:', yolosUpdateError);
-          toast({
-            title: `Failed to save YOLOS: ${yolosUpdateError.message || 'unknown'}`,
-            variant: "destructive",
-          });
         }
+      } catch (yolosError) {
+        console.error('YOLOS processing failed:', yolosError);
+        toast({ title: 'YOLOS processing failed.', variant: 'destructive' });
+        setYolosResult({ error: true });
+      } finally {
+        setYolosAnalyzing(false);
       }
       
       // Extract FASHION_SEG status for dev badge
