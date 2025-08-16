@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Upload, Loader2, Search, Clock, CheckCircle, XCircle } from 'lucide-react';
-import { uploadAndStartInspiration } from '@/lib/inspo';
+
 
 interface InspirationQuery {
   id: string;
@@ -18,11 +18,20 @@ interface InspirationQuery {
 interface Detection {
   id: string;
   query_id: string;
-  bbox: number[];
+  bbox?: number[];
+  bbox_x?: number;
+  bbox_y?: number;
+  bbox_width?: number;
+  bbox_height?: number;
+  label?: string;
+  score?: number;
   category?: string;
   crop_path?: string;
+  crop_image_url?: string;
   mask_path?: string;
   embedding?: number[];
+  color_name?: string | null;
+  color_hex?: string | null;
 }
 
 interface MatchedItem {
@@ -168,65 +177,79 @@ export default function Inspiration({ user }: InspirationProps) {
 
     setUploading(true);
     try {
-      // Upload and start the inspiration query
-      const { imagePath, queryId } = await uploadAndStartInspiration(file);
+      // Get current user
+      const { data: { user }, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !user) throw new Error("Not signed in");
+
+      // Upload to storage
+      const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+      const objectId = crypto.randomUUID();
+      const imagePath = `${user.id}/inspo/${objectId}.${ext}`;
       
-      toast({ 
-        title: 'Photo uploaded', 
-        description: 'Processing your inspiration...'
-      });
-      
-      // Reload queries to show the new query
-      await loadQueries();
-      setActiveQuery(queryId);
-      
-      // Get public URL for the uploaded image
+      const { error: uploadError } = await supabase.storage
+        .from('sila')
+        .upload(imagePath, file, {
+          contentType: file.type || `image/${ext}`,
+          upsert: true
+        });
+        
+      if (uploadError) throw uploadError;
+
+      // Get public URL
       const { data: pub } = supabase.storage.from('sila').getPublicUrl(imagePath);
       const imageUrl = pub.publicUrl;
       
-      // Call sila-model-debugger for detection
-      const projectRef = 'tqbjbugwwffdfhihpkcg'; // Supabase project ref
-      const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA';
-      const fnUrl = `https://${projectRef}.functions.supabase.co/sila-model-debugger`;
+      // Call YOLOS detection
+      const projectRef = import.meta.env.VITE_SUPABASE_URL?.match(/https:\/\/([^.]+)/)?.[1];
+      if (!projectRef) throw new Error("Could not determine project ref");
       
-      const detectRes = await fetch(fnUrl, {
+      const detectRes = await fetch(`https://${projectRef}.functions.supabase.co/sila-model-debugger`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${anonKey}`,
-          'apikey': anonKey,
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({ imageUrl, threshold: 0.5 }),
       });
-      
-      const detectJson = await detectRes.json();
-      
-      if (!detectRes.ok || detectJson?.status !== 'success') {
-        toast({ 
-          title: 'Detection failed', 
-          description: 'Could not detect items in the image',
-          variant: 'destructive' 
-        });
-        return;
+
+      if (!detectRes.ok) {
+        throw new Error(`Detection failed: ${detectRes.status}`);
       }
-      
-      // Convert sila-model-debugger results to Detection objects
-      const results = detectJson.result as Array<{label: string; score: number; box: {xmin: number; ymin: number; xmax: number; ymax: number}}>;
-      const fakeDetections: Detection[] = results.map((result, index) => ({
-        id: `${queryId}-${index}`,
-        query_id: queryId,
-        bbox: [result.box.xmin, result.box.ymin, result.box.xmax, result.box.ymax],
-        category: result.label,
-        // No crop_path, mask_path, or embedding - will show as loading/no matches
-      }));
-      
-      // Set detections directly for immediate display
-      setDetections(fakeDetections);
-      
+
+      const detectJson = await detectRes.json();
+      if (detectJson.status !== 'success') {
+        throw new Error(`Detection failed: ${detectJson.error || 'Unknown error'}`);
+      }
+
       toast({ 
-        title: 'Detection complete!', 
-        description: `Found ${results.length} items in your photo.`
+        title: 'Photo processed', 
+        description: `Found ${detectJson.result?.length || 0} items`
       });
+
+      // Update detections state directly
+      const newDetections: Detection[] = (detectJson.result || []).map((item: any, idx: number) => ({
+        id: `${objectId}-${idx}`,
+        query_id: objectId,
+        label: item.label,
+        score: item.score,
+        bbox_x: item.box[0],
+        bbox_y: item.box[1], 
+        bbox_width: item.box[2] - item.box[0],
+        bbox_height: item.box[3] - item.box[1],
+        crop_image_url: imageUrl, // Use original image for now
+        embedding: null,
+        color_name: null,
+        color_hex: null
+      }));
+
+      setDetections(newDetections);
+      setActiveQuery(objectId);
+      
+      // Load matched items for the detections
+      if (newDetections.length > 0) {
+        await loadMatchedItems(newDetections);
+      }
       
     } catch (error: any) {
       toast({ 

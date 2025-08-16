@@ -4,7 +4,6 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
-import InspoTest from "./pages/InspoTest";
 import Inspiration from "./pages/Inspiration";
 import ItemDetailPage from "./pages/ItemDetailPage";
 import MagicLinkSignIn from "./pages/auth/MagicLinkSignIn";
@@ -21,7 +20,6 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
-          <Route path="/inspo-test" element={<InspoTest />} />
           <Route path="/inspiration" element={<Inspiration />} />
           <Route path="/item/:id" element={<ItemDetailPage />} />
           <Route path="/sign-in-magic" element={<MagicLinkSignIn />} />

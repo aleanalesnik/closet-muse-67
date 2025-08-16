@@ -72,12 +72,21 @@ To connect a domain, navigate to Project > Settings > Domains and click Connect 
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
 
+## Edge Functions
+
+**Active Functions:**
+- `sila-model-debugger` - YOLOS object detection using public image URLs
+- `items-process` - Complete item processing pipeline for closet uploads
+
+**Removed Functions (Jan 2025):**
+- `inference-probe`, `inspiration-start`, `inspiration-run` - Consolidated into sila-model-debugger with public URL workflow
+
 ## Testing Checklist
 
-### Test 1: Probe Test
-- [ ] Call the `inference-probe` edge function
-- [ ] Verify response contains available endpoints
-- [ ] **SQL Verification**: No DB changes expected for probe test
+### Test 1: YOLOS Detection Test
+- [ ] Call the `sila-model-debugger` edge function with public image URL
+- [ ] Verify response contains detected items with bounding boxes
+- [ ] **SQL Verification**: No DB changes expected for detection test
 
 ### Test 2: Items-process Test  
 - [ ] Upload an item through the API (not UI)

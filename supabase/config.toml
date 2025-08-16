@@ -3,11 +3,5 @@ project_id = "tqbjbugwwffdfhihpkcg"
 [functions.items-process]
 verify_jwt = false
 
-[functions.inspiration-start]
-verify_jwt = false
-
-[functions.inspiration-run]
-verify_jwt = false
-
-[functions.inference-probe]
+[functions.sila-model-debugger]
 verify_jwt = false

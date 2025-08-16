@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { uploadAndStartInspiration } from "@/lib/inspo";
+
 import { supabase } from "@/lib/supabase";
 
 export default function InspirationPage() {
@@ -27,8 +27,26 @@ export default function InspirationPage() {
     if (!file) return;
     try {
       setLoading(true);
-      const { queryId } = await uploadAndStartInspiration(file);
-      toast({ title: "Photo queued", description: `Query ${queryId} started.` });
+      
+      // Get current user
+      const { data: { user }, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !user) throw new Error("Not signed in");
+
+      // Upload to storage
+      const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+      const objectId = crypto.randomUUID();
+      const imagePath = `${user.id}/inspo/${objectId}.${ext}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('sila')
+        .upload(imagePath, file, {
+          contentType: file.type || `image/${ext}`,
+          upsert: true
+        });
+        
+      if (uploadError) throw uploadError;
+
+      toast({ title: "Photo uploaded", description: "Processing inspiration..." });
       await loadRecent();
     } catch (err: any) {
       toast({ variant: "destructive", title: "Upload failed", description: String(err?.message || err) });
