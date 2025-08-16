@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
 import { waitUntilPublic } from '@/utils/storage';
-import { PALETTE, snapToPalette } from '@/utils/color';
-import { mapYolosToTaxonomy, buildProposedTitle } from '@/utils/yolosMap';
+import { runYolos } from '@/lib/yolos';
+import { pickPrimary, mapLabelToTaxonomy, buildTitle } from '@/lib/mapYolos';
+import { snapToPalette } from '@/utils/color';
 import SmartCropImg from '@/components/SmartCropImg';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -190,65 +191,40 @@ export default function Closet({ user }: ClosetProps) {
         return;
       }
       
-      console.log('[YOLOS] Calling edge function with:', imageUrl);
-      
-      const detectRes = await fetch(`https://tqbjbugwwffdfhihpkcg.functions.supabase.co/sila-model-debugger`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA`
-        },
-        body: JSON.stringify({ imageUrl, threshold: 0.12 })
-      });
-      
-      const data = await detectRes.json();
-      console.log('[YOLOS] Response:', data);
-      
-      if (!detectRes.ok || data.status !== 'success' || !data.result) {
-        console.error('[YOLOS] Skipping persist due to failed detection', data);
-        setUploadingItems(prev => prev.filter(item => item.id !== uploadingId));
-        toast({
-          title: 'YOLOS analysis failed',
-          description: 'Could not analyze the image',
-          variant: 'destructive'
-        });
-        return;
+      console.log('[YOLOS] Starting', { itemId, imageUrl });
+
+      const preds = await runYolos(imageUrl);
+      console.log('[YOLOS] detections:', preds);
+
+      const primary = pickPrimary(preds);
+      let category: string | null = null;
+      let subcategory: string | null = null;
+      let bbox: number[] | null = null;
+
+      if (primary) {
+        const mapped = mapLabelToTaxonomy(primary.label);
+        if (mapped) { category = mapped.category; subcategory = mapped.subcategory; }
+        bbox = [primary.box.xmin, primary.box.ymin, primary.box.xmax, primary.box.ymax].map(n => Math.round(Number(n)));
       }
-      
-      // Extract data with proper types
-      const {
-        proposedTitle,
+
+      // Always compute/snap color from full image
+      const dominantHex = await dominantHexFromUrl(imageUrl);
+      const { name: colorName, hex: colorHex } = snapToPalette(dominantHex);
+
+      const title = buildTitle(colorName, category ? { category, subcategory: subcategory || '' } : null);
+
+      // Build update payload with safe types (types aligned with DB)
+      const updatePayload: any = {
+        title,
         category,
         subcategory,
-        colorName,
-        colorHex,
+        color_name: colorName,
+        color_hex: colorHex,
         bbox,
-        result,
-        latencyMs,
-        model,
-      } = data as any;
-
-      // Build top labels array with proper type casting
-      const topLabels: string[] =
-        Array.isArray(result)
-          ? result
-              .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
-              .slice(0, 3)
-              .map((r: any) => String(r.label ?? ""))
-              .filter(Boolean)
-          : [];
-
-      // Build update payload with safe types
-      const updatePayload: any = {
-        title: proposedTitle ?? null,
-        category: category ?? null,
-        subcategory: subcategory ?? null,
-        color_name: colorName ?? null,
-        color_hex: colorHex ?? null,
-        yolos_top_labels: topLabels.length ? topLabels : null,
-        yolos_latency_ms: typeof latencyMs === "number" ? Math.round(latencyMs) : null,
-        yolos_model: model ?? "valentinafeve/yolos-fashionpedia",
-        bbox: Array.isArray(bbox) && bbox.length === 4 ? bbox.map(Number) : null,
+        // Optional: store top 3 labels for UI "AI chips"
+        yolos_top_labels: Array.isArray(preds)
+          ? preds.sort((a,b)=> (b.score??0)-(a.score??0)).slice(0,3).map(p => String(p.label || '')).filter(Boolean)
+          : null,
       };
 
       console.log('[YOLOS] Persisting:', updatePayload);
