@@ -27,51 +27,42 @@ export default function DetectionsOverlay({
 
   console.log('[DEBUG DetectionsOverlay] First pred box:', preds[0]?.box);
   
-  // The issue: SmartCropImg applies transforms, but we're mapping coordinates to the container
-  // Solution: Account for how the image is actually displayed within the container
   
-  // Calculate how the image fits within the container (similar to object-fit: contain)
-  const imageAspectRatio = naturalWidth / naturalHeight;
-  const containerAspectRatio = renderedWidth / renderedHeight;
+  // The DetectionsOverlay needs to apply the SAME transforms as SmartCropImg
+  // to ensure boxes appear exactly where the image content is displayed
   
-  let displayedImageWidth, displayedImageHeight, imageOffsetX, imageOffsetY;
-  
-  if (imageAspectRatio > containerAspectRatio) {
-    // Image is wider - fits to container width, centered vertically
-    displayedImageWidth = renderedWidth;
-    displayedImageHeight = renderedWidth / imageAspectRatio;
-    imageOffsetX = 0;
-    imageOffsetY = (renderedHeight - displayedImageHeight) / 2;
-  } else {
-    // Image is taller - fits to container height, centered horizontally  
-    displayedImageWidth = renderedHeight * imageAspectRatio;
-    displayedImageHeight = renderedHeight;
-    imageOffsetX = (renderedWidth - displayedImageWidth) / 2;
-    imageOffsetY = 0;
-  }
-  
-  console.log('[DEBUG DetectionsOverlay] Image display:', {
-    displayedImageWidth, displayedImageHeight, imageOffsetX, imageOffsetY,
-    imageAspectRatio, containerAspectRatio
-  });
-
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
       {preds.map((p, i) => {
-        // Map normalized coordinates to the displayed image area
-        const w = (p.box.xmax - p.box.xmin) * displayedImageWidth;
-        const h = (p.box.ymax - p.box.ymin) * displayedImageHeight;
-        const x = p.box.xmin * displayedImageWidth + imageOffsetX;
-        const y = p.box.ymin * displayedImageHeight + imageOffsetY;
+        // Apply the same coordinate transformation as the displayed image
+        // Since detections are in normalized image coordinates [0,1],
+        // we need to map them to the actual pixels where the image content appears
+        
+        // Simple mapping: normalized coords * displayed image dimensions + offsets
+        const w = (p.box.xmax - p.box.xmin) * naturalWidth;
+        const h = (p.box.ymax - p.box.ymin) * naturalHeight;
+        const x = p.box.xmin * naturalWidth;
+        const y = p.box.ymin * naturalHeight;
+        
+        // Now scale to fit the rendered size (same as img element scaling)
+        const scale = Math.min(renderedWidth / naturalWidth, renderedHeight / naturalHeight);
+        const scaledW = w * scale;
+        const scaledH = h * scale;
+        const scaledX = x * scale;
+        const scaledY = y * scale;
+        
+        // Center the scaled coordinates in the container
+        const finalX = scaledX + (renderedWidth - naturalWidth * scale) / 2;
+        const finalY = scaledY + (renderedHeight - naturalHeight * scale) / 2;
         const pct = Math.round(p.score * 100);
 
-        console.log(`[DEBUG DetectionsOverlay] Box ${i}: raw=(${p.box.xmin},${p.box.ymin},${p.box.xmax},${p.box.ymax}), rendered=(${x},${y},${w},${h})`);
-        
+        console.log(`[DEBUG DetectionsOverlay] Box ${i}: normalized=(${p.box.xmin.toFixed(3)},${p.box.ymin.toFixed(3)},${p.box.xmax.toFixed(3)},${p.box.ymax.toFixed(3)}), final=(${finalX.toFixed(1)},${finalY.toFixed(1)},${scaledW.toFixed(1)},${scaledH.toFixed(1)})`);
+
         return (
           <div 
             key={i} 
             className="absolute"
-            style={{ left: x, top: y, width: w, height: h }}
+            style={{ left: finalX, top: finalY, width: scaledW, height: scaledH }}
           >
             <div className="absolute inset-0 rounded-md border-2 border-white/90 shadow-[0_0_0_2px_rgba(99,102,241,0.75)]" />
             <div className="absolute -top-7 left-0 px-2 py-0.5 rounded-md 
