@@ -22,20 +22,9 @@ export default function DetectionsOverlay({
   itemBbox,
   paddingPct = 0.1,
 }: Props) {
-  console.log('[DEBUG DetectionsOverlay] itemBbox:', itemBbox, 'paddingPct:', paddingPct);
-  console.log('[DEBUG DetectionsOverlay] dimensions:', {naturalWidth, naturalHeight, renderedWidth, renderedHeight});
-  console.log('[DEBUG DetectionsOverlay] bbox validation:', {
-    isArray: Array.isArray(itemBbox),
-    length: itemBbox?.length,
-    hasNaturalDims: naturalWidth > 0 && naturalHeight > 0
-  });
-  
   if (!preds || preds.length === 0 || !naturalWidth || !naturalHeight || !renderedWidth || !renderedHeight) {
-    console.log('[DEBUG DetectionsOverlay] Not rendering - missing data');
     return null;
   }
-
-  console.log('[DEBUG DetectionsOverlay] First pred box:', preds[0]?.box);
   
   
   // Apply THE EXACT SAME validation and transforms as SmartCropImg
@@ -50,13 +39,11 @@ export default function DetectionsOverlay({
   let imageScale, imageOffsetX, imageOffsetY;
   
   if (!isValidBbox) {
-    console.log('[DEBUG DetectionsOverlay] Using simple object-fit:contain logic');
     // No smart cropping - use simple object-fit: contain (matches SmartCropImg fallback)
     imageScale = Math.min(cw / iw, ch / ih);
     imageOffsetX = (cw - iw * imageScale) / 2;
     imageOffsetY = (ch - ih * imageScale) / 2;
   } else {
-    console.log('[DEBUG DetectionsOverlay] Using smart crop logic with bbox:', itemBbox);
     // Smart cropping is active - replicate SmartCropImg's exact logic
     const [x, y, w, h] = itemBbox; // normalized [0..1]
     const ow = w * iw;
@@ -69,11 +56,6 @@ export default function DetectionsOverlay({
     imageOffsetX = cw / 2 - (x + w/2) * iw * imageScale;
     imageOffsetY = ch / 2 - (y + h/2) * ih * imageScale;
   }
-  
-  console.log('[DEBUG DetectionsOverlay] Transform:', {
-    imageScale, imageOffsetX, imageOffsetY, 
-    smartCrop: !!itemBbox
-  });
 
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
@@ -84,8 +66,6 @@ export default function DetectionsOverlay({
         const x = p.box.xmin * iw * imageScale + imageOffsetX;
         const y = p.box.ymin * ih * imageScale + imageOffsetY;
         const pct = Math.round(p.score * 100);
-
-        console.log(`[DEBUG DetectionsOverlay] Box ${i}: norm=(${p.box.xmin.toFixed(3)},${p.box.ymin.toFixed(3)}), final=(${x.toFixed(1)},${y.toFixed(1)},${w.toFixed(1)},${h.toFixed(1)})`);
 
         return (
           <div 

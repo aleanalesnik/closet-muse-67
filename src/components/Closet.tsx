@@ -239,14 +239,8 @@ export default function Closet({ user }: ClosetProps) {
       
       // Store detections in memory for overlay
       if (analysis.yolos_result) {
-        console.log('[DEBUG] Raw yolos_result:', analysis.yolos_result);
         const preds = resultToDetections(analysis.yolos_result);
-        console.log('[DEBUG] Converted detections:', preds);
-        console.log('[DEBUG] Setting detections for itemId:', itemId);
         setItemDetections(itemId, preds);
-        console.log('[DEBUG] Detections state after setting:', detections);
-      } else {
-        console.log('[DEBUG] No yolos_result in analysis');
       }
       
       // Analysis result is ready to persist
@@ -298,8 +292,6 @@ export default function Closet({ user }: ClosetProps) {
         console.warn('Failed to generate signed URL:', urlError);
       }
       
-      console.log('[DEBUG] Added new item to state:', newItem);
-      console.log('[DEBUG] Current detections map has:', Array.from(detections.keys()));
       
     } catch (error: any) {
       console.error('[YOLOS] Upload failed:', error);

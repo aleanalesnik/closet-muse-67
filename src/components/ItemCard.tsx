@@ -50,33 +50,21 @@ export default function ItemCard({
     const img = imgRef.current;
     const container = containerRef.current;
     if (!img || !container) {
-      console.log('[DEBUG ItemCard] Missing refs for item:', item.id, { hasImg: !!img, hasContainer: !!container });
       return;
     }
 
     const updateDimensions = () => {
       if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-        console.log('[DEBUG ItemCard] Updating dimensions for item:', item.id, {
-          natural: `${img.naturalWidth}x${img.naturalHeight}`,
-          rendered: `${container.clientWidth}x${container.clientHeight}`
-        });
         setDimensions({
           naturalWidth: img.naturalWidth,
           naturalHeight: img.naturalHeight,
           renderedWidth: container.clientWidth,
           renderedHeight: container.clientHeight
         });
-      } else {
-        console.log('[DEBUG ItemCard] Image not ready for dimensions:', item.id, {
-          naturalWidth: img.naturalWidth,
-          naturalHeight: img.naturalHeight,
-          complete: img.complete
-        });
       }
     };
 
     const handleLoad = () => {
-      console.log('[DEBUG ItemCard] Image load event for item:', item.id);
       // Add a small delay to ensure container has rendered
       setTimeout(updateDimensions, 50);
     };
@@ -87,7 +75,6 @@ export default function ItemCard({
     window.addEventListener('resize', handleResize);
     
     if (img.complete && img.naturalWidth > 0) {
-      console.log('[DEBUG ItemCard] Image already loaded for item:', item.id);
       handleLoad();
     }
     
@@ -104,8 +91,7 @@ export default function ItemCard({
     debugDetections || (isUploading && item.status === 'analyzing')
   );
   
-  console.log('[DEBUG ItemCard] Item:', item.id, 'debugDetections:', debugDetections, 'isUploading:', isUploading, 'status:', item.status, 'detectionPreds:', detectionPreds, 'showOverlay:', showOverlay);
-
+  
   const cardContent = (
     <Card className={`overflow-hidden transition-all ${
       isSelectionMode 
