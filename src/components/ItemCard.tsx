@@ -91,6 +91,14 @@ export default function ItemCard({
     debugDetections || (isUploading && item.status === 'analyzing')
   );
   
+  console.log('[CLIENT DEBUG] ItemCard for', item.id, {
+    debugDetections,
+    isUploading,
+    status: item.status,
+    detectionPredsCount: detectionPreds?.length || 0,
+    showOverlay
+  });
+  
   
   const cardContent = (
     <Card className={`overflow-hidden transition-all ${

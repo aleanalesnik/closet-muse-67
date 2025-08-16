@@ -106,9 +106,11 @@ export default function Closet({ user }: ClosetProps) {
   }, []);
 
   const setItemDetections = (itemId: string, preds: YolosPred[]) => {
+    console.log('[CLIENT DEBUG] Storing detections for itemId:', itemId, 'count:', preds.length);
     setDetections(prev => {
       const next = new Map(prev);
       next.set(itemId, preds);
+      console.log('[CLIENT DEBUG] Updated detections map, now has:', Array.from(next.keys()));
       return next;
     });
   };
