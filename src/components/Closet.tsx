@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, Loader2 } from 'lucide-react';
+import { Upload, Loader2, Trash2, Check, X, Square, CheckSquare } from 'lucide-react';
 
 interface Item {
   id: string;
@@ -35,6 +35,9 @@ export default function Closet({ user }: ClosetProps) {
   const [yolosAnalyzing, setYolosAnalyzing] = useState(false);
   const [yolosResult, setYolosResult] = useState<any>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
   const previewImageRef = useRef<HTMLImageElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -278,6 +281,66 @@ export default function Closet({ user }: ClosetProps) {
     });
   }, [items]);
 
+  const toggleSelectionMode = () => {
+    setIsSelectionMode(!isSelectionMode);
+    setSelectedItems(new Set());
+  };
+
+  const toggleItemSelection = (itemId: string) => {
+    setSelectedItems(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
+      return newSet;
+    });
+  };
+
+  const selectAllItems = () => {
+    setSelectedItems(new Set(items.map(item => item.id)));
+  };
+
+  const clearSelection = () => {
+    setSelectedItems(new Set());
+  };
+
+  const deleteSelectedItems = async () => {
+    if (selectedItems.size === 0) return;
+    
+    setDeleting(true);
+    try {
+      const itemIds = Array.from(selectedItems);
+      
+      // Delete from database
+      const { error } = await supabase
+        .from('items')
+        .delete()
+        .in('id', itemIds);
+
+      if (error) throw error;
+
+      // Update local state
+      setItems(prev => prev.filter(item => !selectedItems.has(item.id)));
+      setSelectedItems(new Set());
+      setIsSelectionMode(false);
+
+      toast({
+        title: 'Items deleted',
+        description: `Successfully deleted ${itemIds.length} item${itemIds.length > 1 ? 's' : ''}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Delete failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <>
       <style>{`
@@ -302,14 +365,64 @@ export default function Closet({ user }: ClosetProps) {
             onChange={handleFileUpload}
             className="hidden"
           />
-          <Button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading || yolosAnalyzing}
-            className="flex items-center gap-2"
-          >
-            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            {uploading ? 'Uploading...' : 'Add Item'}
-          </Button>
+          {isSelectionMode ? (
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={selectAllItems}
+                disabled={selectedItems.size === items.length}
+                variant="outline"
+                size="sm"
+              >
+                Select All
+              </Button>
+              <Button
+                onClick={clearSelection}
+                disabled={selectedItems.size === 0}
+                variant="outline" 
+                size="sm"
+              >
+                Clear
+              </Button>
+              <Button
+                onClick={deleteSelectedItems}
+                disabled={selectedItems.size === 0 || deleting}
+                variant="destructive"
+                size="sm"
+                className="flex items-center gap-2"
+              >
+                {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Delete {selectedItems.size > 0 ? `(${selectedItems.size})` : ''}
+              </Button>
+              <Button
+                onClick={toggleSelectionMode}
+                variant="outline"
+                size="sm"
+              >
+                <X className="w-4 h-4" />
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <>
+              <Button
+                onClick={toggleSelectionMode}
+                disabled={items.length === 0}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <CheckSquare className="w-4 h-4" />
+                Select
+              </Button>
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || yolosAnalyzing}
+                className="flex items-center gap-2"
+              >
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                {uploading ? 'Uploading...' : 'Add Item'}
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -368,8 +481,10 @@ export default function Closet({ user }: ClosetProps) {
 
           return (
             <div key={item.id} className="relative group">
-              <Link to={`/item/${item.id}`} className="block">
-                <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+              {isSelectionMode ? (
+                <Card className={`overflow-hidden transition-all cursor-pointer ${
+                  selectedItems.has(item.id) ? 'ring-2 ring-primary shadow-lg' : 'hover:shadow-lg'
+                }`} onClick={() => toggleItemSelection(item.id)}>
                   <div className="aspect-square relative">
                     {processing.has(item.id) && (
                       <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10 rounded-t-lg">
@@ -381,8 +496,12 @@ export default function Closet({ user }: ClosetProps) {
                       alt={item.title || 'Closet item'}
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute top-2 right-2">
-                      {/* Removed retry processing dropdown since items-process is no longer available */}
+                    <div className="absolute top-2 right-2 bg-background/80 rounded-full p-1">
+                      {selectedItems.has(item.id) ? (
+                        <CheckSquare className="w-5 h-5 text-primary" />
+                      ) : (
+                        <Square className="w-5 h-5 text-muted-foreground" />
+                      )}
                     </div>
                   </div>
                   <CardContent className="p-4">
@@ -417,7 +536,58 @@ export default function Closet({ user }: ClosetProps) {
                     </div>
                   </CardContent>
                 </Card>
-              </Link>
+              ) : (
+                <Link to={`/item/${item.id}`} className="block">
+                  <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+                    <div className="aspect-square relative">
+                      {processing.has(item.id) && (
+                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10 rounded-t-lg">
+                          <Loader2 className="h-8 w-8 animate-spin text-white" />
+                        </div>
+                      )}
+                      <img 
+                        src={signedUrls[item.image_path] || "/placeholder.svg"} 
+                        alt={item.title || 'Closet item'}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute top-2 right-2">
+                        {/* Removed retry processing dropdown since items-process is no longer available */}
+                      </div>
+                    </div>
+                  <CardContent className="p-4">
+                    <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {item.category && (
+                        <Badge variant="secondary" className="text-xs">
+                          {item.category}
+                        </Badge>
+                      )}
+                      {item.subcategory && (
+                        <Badge variant="outline" className="text-xs">
+                          {item.subcategory}
+                        </Badge>
+                      )}
+                      {item.color_name && (
+                        <Badge variant="outline" className="text-xs">
+                          {item.color_name}
+                        </Badge>
+                      )}
+                    </div>
+                    {aiLabels.length > 0 && (
+                      <div className="ai-row" data-testid="ai-chips">
+                        <span className="ai-kicker">AI</span>
+                        {aiLabels.slice(0, 3).map(label => (
+                          <span key={label} className="ai-chip">{label}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="text-xs text-muted-foreground">
+                      Added {new Date(item.created_at).toLocaleDateString()}
+                    </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              )}
             </div>
           );
         })}
