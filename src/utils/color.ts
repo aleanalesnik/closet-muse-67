@@ -4,8 +4,6 @@ export const PALETTE = [
   { name: "White", hex: "#FFFFFF" },
   { name: "Beige", hex: "#EEE3D1" },
   { name: "Brown", hex: "#583B30" },
-  { name: "Silver", hex: "#C0C0C0" },
-  { name: "Gold", hex: "#D4AF37" },
   { name: "Purple", hex: "#8023AD" },
   { name: "Blue", hex: "#3289E2" },
   { name: "Navy", hex: "#144679" },
