@@ -42,6 +42,23 @@ type YolosBox = { xmin: number; ymin: number; xmax: number; ymax: number };
 type YolosPred = { label: string; score: number; box: YolosBox };
 type DetectionsMap = Map<string, YolosPred[]>;
 
+// Helper to convert bbox to number array for persistence
+function asBboxArray(b: any): number[] | null {
+  if (!b) return null;
+
+  if (Array.isArray(b) && b.length === 4) {
+    const arr = b.map((n) => Number(n));
+    return arr.every((n) => Number.isFinite(n)) ? arr as number[] : null;
+  }
+
+  if (typeof b === "object" && b !== null) {
+    const maybe = [b.xmin, b.ymin, b.xmax, b.ymax].map((n) => Number(n));
+    return maybe.every((n) => Number.isFinite(n)) ? (maybe as number[]) : null;
+  }
+
+  return null;
+}
+
 // Helper to process edge function response
 function processEdgeResponse(res: any) {
   const pretty = (s?: string | null) => s ? s.trim() : null;
@@ -52,8 +69,8 @@ function processEdgeResponse(res: any) {
       : 'Item'
   );
 
-  // Accept bbox as-is from edge (pixels) - don't normalize
-  const raw = res?.result?.[0]?.box ?? res?.bbox ?? null;
+  // Convert bbox to array format for persistence (pixels)
+  const bboxArr = asBboxArray(res?.result?.[0]?.box) ?? asBboxArray(res?.bbox) ?? null;
 
   return {
     title,
@@ -61,7 +78,7 @@ function processEdgeResponse(res: any) {
     subcategory: null, // Always null for now
     color_name: pretty(res.colorName),
     color_hex: pretty(res.colorHex),
-    bbox: raw,
+    bbox: bboxArr,
     yolos_top_labels: Array.isArray(res.result)
       ? res.result.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
           .slice(0, 3)
