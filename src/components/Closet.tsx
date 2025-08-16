@@ -63,28 +63,13 @@ function asBboxArray(b: any): number[] | null {
 function processEdgeResponse(res: any) {
   const pretty = (s?: string | null) => s ? s.trim() : null;
 
-  const title = pretty(res.proposedTitle) ?? (
-    pretty(res.colorName) && pretty(res.category)
-      ? `${res.colorName} ${res.category.toLowerCase()}`
-      : 'Item'
-  );
-
-  // Convert bbox to array format for persistence (pixels)
-  const bboxArr = asBboxArray(res?.result?.[0]?.box) ?? asBboxArray(res?.bbox) ?? null;
-
   return {
-    title,
+    title: pretty(res.proposedTitle) || 'Item',
     category: pretty(res.category),
-    subcategory: null, // Always null for now
+    subcategory: null, // Always null after upload - user sets later
     color_name: pretty(res.colorName),
-    color_hex: pretty(res.colorHex),
-    bbox: bboxArr,
-    yolos_top_labels: Array.isArray(res.result)
-      ? res.result.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
-          .slice(0, 3)
-          .map((p: any) => String(p.label || ''))
-          .filter(Boolean)
-      : null,
+    color_hex: pretty(res.colorHex), 
+    bbox: res.bbox || null, // Normalized array from edge
     yolos_latency_ms: res.latencyMs ?? null,
     yolos_model: res.model ?? null,
   };

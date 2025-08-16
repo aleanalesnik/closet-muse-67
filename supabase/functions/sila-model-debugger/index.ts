@@ -1,8 +1,9 @@
 // deno-lint-ignore-file no-explicit-any
 import { encodeBase64 } from 'https://deno.land/std@0.224.0/encoding/base64.ts';
+import { decode } from 'https://deno.land/x/imagescript@1.2.15/mod.ts';
 
 const HF_ENDPOINT_URL = Deno.env.get('HF_ENDPOINT_URL')!;
-const HF_TOKEN = Deno.env.get('HF_TOKEN')!;
+const HF_TOKEN = Deno.env.get('HF_TOKEN')!
 
 type DetectReq = {
   imageUrl?: string;
@@ -79,128 +80,225 @@ Deno.serve(async (req) => {
 
     const result = await hf.json();
     
-    // YOLOS mapping and title building
-    function mapYolosToTaxonomy(label: string): { category: string; subcategory: string } | null {
+    // Garment filtering and mapping helpers
+    const GARMENT_LABELS = new Set([
+      'dress', 'shirt', 'blouse', 't-shirt', 'top', 'sweater', 'cardigan',
+      'jacket', 'coat', 'blazer', 'vest', 'pants', 'jeans', 'trousers', 
+      'shorts', 'skirt', 'shoes', 'boots', 'sneakers', 'heels', 'sandals',
+      'bag', 'handbag', 'purse', 'backpack', 'tote', 'clutch', 'belt',
+      'hat', 'cap', 'scarf', 'sunglasses', 'glasses'
+    ]);
+
+    function pickMainGarment(detections: any[]): any | null {
+      if (!Array.isArray(detections) || !detections.length) return null;
+      
+      // Filter to garment labels only
+      const garments = detections.filter(d => {
+        const label = (d?.label || '').toLowerCase();
+        return GARMENT_LABELS.has(label) || 
+               Array.from(GARMENT_LABELS).some(g => label.includes(g));
+      });
+      
+      if (!garments.length) return null;
+      
+      // Sort by score then area (larger area wins ties)
+      return garments.sort((a, b) => {
+        const scoreDiff = (b.score || 0) - (a.score || 0);
+        if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
+        
+        const areaA = a.box ? (a.box.xmax - a.box.xmin) * (a.box.ymax - a.box.ymin) : 0;
+        const areaB = b.box ? (b.box.xmax - b.box.xmin) * (b.box.ymax - b.box.ymin) : 0;
+        return areaB - areaA;
+      })[0];
+    }
+
+    function mapToCategory(label: string): string | null {
       const s = label.toLowerCase();
       
-      // Bags
-      if (["handbag", "bag", "tote", "shoulder bag", "satchel", "purse", "crossbody", "hobo", "clutch", "duffle"].some(term => s.includes(term))) {
-        if (s.includes("tote")) return { category: "Bags", subcategory: "Tote" };
-        if (s.includes("shoulder") || s.includes("crossbody")) return { category: "Bags", subcategory: "Shoulder" };
-        if (s.includes("backpack")) return { category: "Bags", subcategory: "Backpack" };
-        return { category: "Bags", subcategory: "Bag" };
+      if (["handbag", "bag", "tote", "purse", "clutch", "backpack"].some(term => s.includes(term))) {
+        return "Bags";
       }
       
-      // Accessories
-      if (["belt", "buckle", "sunglasses", "glasses", "hat", "cap", "beanie", "scarf"].some(term => s.includes(term))) {
-        if (s.includes("belt") || s.includes("buckle")) return { category: "Accessories", subcategory: "Belt" };
-        if (s.includes("sunglasses") || s.includes("glasses")) return { category: "Accessories", subcategory: "Sunglasses" };
-        if (s.includes("hat") || s.includes("cap") || s.includes("beanie")) return { category: "Accessories", subcategory: "Hat" };
-        if (s.includes("scarf")) return { category: "Accessories", subcategory: "Scarf" };
-        return { category: "Accessories", subcategory: "Accessory" };
+      if (["belt", "sunglasses", "glasses", "hat", "cap", "scarf"].some(term => s.includes(term))) {
+        return "Accessories";
       }
       
-      // Shoes
-      if (["boot", "boots", "sneaker", "shoe", "loafer", "heel", "sandals", "flat", "flats"].some(term => s.includes(term))) {
-        if (s.includes("boots")) return { category: "Shoes", subcategory: "Boots" };
-        if (s.includes("sneaker") || s.includes("trainer")) return { category: "Shoes", subcategory: "Sneakers" };
-        if (s.includes("heel")) return { category: "Shoes", subcategory: "Heels" };
-        if (s.includes("flat") || s.includes("loafer")) return { category: "Shoes", subcategory: "Flats" };
-        return { category: "Shoes", subcategory: "Shoes" };
+      if (["boot", "boots", "sneaker", "shoe", "heel", "sandals", "flat"].some(term => s.includes(term))) {
+        return "Shoes";
       }
       
-      // Dress
-      if (s.includes("dress")) return { category: "Dress", subcategory: "Dress" };
+      if (s.includes("dress")) return "Dress";
       
-      // Top
-      if (["shirt", "t-shirt", "tee", "blouse", "polo", "sweater", "knit", "jumper", "tank", "top", "sweatshirt", "hoodie"].some(term => s.includes(term))) {
-        if (s.includes("sweater") || s.includes("knit") || s.includes("jumper")) return { category: "Top", subcategory: "Sweater" };
-        if (s.includes("sweatshirt") || s.includes("hoodie")) return { category: "Top", subcategory: "Sweatshirt" };
-        if (s.includes("tank")) return { category: "Top", subcategory: "Tank" };
-        return { category: "Top", subcategory: "T-Shirt" };
+      if (["shirt", "t-shirt", "blouse", "tank", "top", "sweater", "hoodie"].some(term => s.includes(term))) {
+        return "Top";
       }
       
-      // Outerwear
-      if (["jacket", "coat", "blazer", "trench", "outerwear"].some(term => s.includes(term))) {
-        if (s.includes("coat") || s.includes("trench")) return { category: "Outerwear", subcategory: "Coat" };
-        if (s.includes("blazer")) return { category: "Outerwear", subcategory: "Blazer" };
-        return { category: "Outerwear", subcategory: "Jacket" };
+      if (["jacket", "coat", "blazer"].some(term => s.includes(term))) {
+        return "Outerwear";
       }
       
-      // Bottoms
       if (["jeans", "pants", "trousers", "skirt", "shorts"].some(term => s.includes(term))) {
-        if (s.includes("jeans")) return { category: "Bottoms", subcategory: "Jeans" };
-        if (s.includes("pants") || s.includes("trousers")) return { category: "Bottoms", subcategory: "Pants" };
-        if (s.includes("skirt")) return { category: "Bottoms", subcategory: "Skirt" };
-        if (s.includes("shorts")) return { category: "Bottoms", subcategory: "Shorts" };
-        return { category: "Bottoms", subcategory: "Pants" };
+        return "Bottoms";
       }
       
-      // Fallback
-      return { category: "Clothing", subcategory: "Item" };
+      return "Clothing";
     }
 
-    function titleCase(s: string): string {
-      return s.split(/\s+/).map(w => 
-        w[0] ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w
-      ).join(' ');
-    }
-
-    function buildProposedTitle(colorName: string | null, category: string | null, subcategory: string | null): string {
-      const color = colorName?.toLowerCase?.() || "";
+    function normalizeBboxPixels(box: any, imgWidth: number, imgHeight: number): number[] | null {
+      if (!box || !imgWidth || !imgHeight) return null;
       
-      if (category && subcategory) {
-        if (category === "Bags" && subcategory === "Tote") {
-          return color ? `${titleCase(color)} tote bag` : "Tote bag";
+      const xmin = Math.max(0, Math.min(box.xmin / imgWidth, 1));
+      const ymin = Math.max(0, Math.min(box.ymin / imgHeight, 1));  
+      const xmax = Math.max(0, Math.min(box.xmax / imgWidth, 1));
+      const ymax = Math.max(0, Math.min(box.ymax / imgHeight, 1));
+      
+      return [xmin, ymin, xmax, ymax];
+    }
+
+    const PALETTE = [
+      { name: "Black", hex: "#000000" },
+      { name: "Grey", hex: "#D9D9D9" },
+      { name: "White", hex: "#FFFFFF" },
+      { name: "Beige", hex: "#EEE3D1" },
+      { name: "Brown", hex: "#583B30" },
+      { name: "Silver", hex: "#C0C0C0" },
+      { name: "Gold", hex: "#D4AF37" },
+      { name: "Purple", hex: "#8023AD" },
+      { name: "Blue", hex: "#3289E2" },
+      { name: "Navy", hex: "#144679" },
+      { name: "Green", hex: "#39C161" },
+      { name: "Yellow", hex: "#FCD759" },
+      { name: "Orange", hex: "#FB7C00" },
+      { name: "Pink", hex: "#F167A7" },
+      { name: "Red", hex: "#CD0002" },
+      { name: "Maroon", hex: "#720907" },
+    ];
+
+    function hexToRgb(hex: string): [number, number, number] {
+      const n = parseInt(hex.slice(1), 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+
+    function snapToPalette(hex: string): { name: string; hex: string } {
+      const [r, g, b] = hexToRgb(hex);
+      let best = 0;
+      let bestDistance = Infinity;
+      
+      for (let i = 0; i < PALETTE.length; i++) {
+        const [pr, pg, pb] = hexToRgb(PALETTE[i].hex);
+        const distance = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
+        if (distance < bestDistance) {
+          best = i;
+          bestDistance = distance;
         }
-        return color ? `${titleCase(color)} ${subcategory.toLowerCase()}` : titleCase(subcategory);
       }
       
-      if (category) {
-        return color ? `${titleCase(color)} ${category.toLowerCase()}` : titleCase(category);
-      }
-      
-      return color ? `${titleCase(color)} clothing` : "Clothing";
+      return PALETTE[best];
     }
 
-    // Color extraction (placeholder - assuming this gets filled with actual image processing)
-    const colorHex = "#000000";  // Will be processed client-side
-    const colorName = "Black";   // Will be processed client-side
+    async function dominantColor(imageUrl: string): Promise<{ name: string; hex: string }> {
+      try {
+        const imgRes = await fetch(imageUrl);
+        if (!imgRes.ok) throw new Error('Failed to fetch image');
+        
+        const imgBytes = new Uint8Array(await imgRes.arrayBuffer());
+        const image = decode(imgBytes);
+        
+        if (!image) throw new Error('Failed to decode image');
+        
+        // Sample pixels and compute dominant color
+        const colorCounts = new Map<string, number>();
+        const width = image.width;
+        const height = image.height;
+        
+        // Sample every 10th pixel for performance
+        for (let y = 0; y < height; y += 10) {
+          for (let x = 0; x < width; x += 10) {
+            const pixel = image.getPixelAt(x, y);
+            const r = (pixel >> 24) & 255;
+            const g = (pixel >> 16) & 255; 
+            const b = (pixel >> 8) & 255;
+            const a = pixel & 255;
+            
+            // Skip transparent and near-white low-saturation pixels
+            if (a < 128) continue;
+            
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const saturation = max === 0 ? 0 : (max - min) / max;
+            const lightness = (max + min) / 2;
+            
+            if (lightness > 240 && saturation < 0.1) continue;
+            
+            const hex = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+            colorCounts.set(hex, (colorCounts.get(hex) || 0) + 1);
+          }
+        }
+        
+        if (colorCounts.size === 0) {
+          return PALETTE[0]; // Default to black
+        }
+        
+        // Find most frequent color
+        const dominantHex = Array.from(colorCounts.entries())
+          .sort((a, b) => b[1] - a[1])[0][0];
+          
+        return snapToPalette(dominantHex);
+      } catch (error) {
+        console.error('Color extraction failed:', error);
+        return PALETTE[0]; // Default to black
+      }
+    }
 
-    // Get top 3 labels by score
+    // Process detections
     const detections = Array.isArray(result) ? result : [];
-    const yolosTopLabels = detections
-      .sort((a: any, b: any) => (b.score || 0) - (a.score || 0))
-      .slice(0, 3)
-      .map((d: any) => d.label || '');
-
-    // Get best detection for mapping
-    const top = detections.length ? detections[0] : null;
-    const bbox = top?.box ? {
-      xmin: top.box.xmin,
-      ymin: top.box.ymin,
-      xmax: top.box.xmax,
-      ymax: top.box.ymax
-    } : null;
-
-    // Map to taxonomy
-    const mapped = top ? mapYolosToTaxonomy(top.label || '') : null;
-    const category = mapped?.category || null;
-    const subcategory = mapped?.subcategory || null;
+    const mainGarment = pickMainGarment(detections);
     
-    const proposedTitle = buildProposedTitle(colorName, category, subcategory);
+    // Get category from main garment
+    const category = mainGarment ? mapToCategory(mainGarment.label || '') : null;
+    
+    // Get normalized bbox
+    let bbox: number[] | null = null;
+    if (mainGarment?.box && body.imageUrl) {
+      // For proper normalization, we need actual image dimensions
+      // Try to extract from the decoded image if we have it
+      let imgWidth = 1024;  // Default assumption
+      let imgHeight = 1024; // Default assumption
+      
+      try {
+        const imgRes = await fetch(body.imageUrl);
+        const imgBytes = new Uint8Array(await imgRes.arrayBuffer());
+        const image = decode(imgBytes);
+        if (image) {
+          imgWidth = image.width;
+          imgHeight = image.height;
+        }
+      } catch (e) {
+        console.warn('Could not get image dimensions:', e);
+      }
+      
+      bbox = normalizeBboxPixels(mainGarment.box, imgWidth, imgHeight);
+    }
+    
+    // Extract color from image URL
+    let colorResult = { name: "Black", hex: "#000000" };
+    if (body.imageUrl) {
+      colorResult = await dominantColor(body.imageUrl);
+    }
+    
+    const proposedTitle = colorResult.name && category 
+      ? `${colorResult.name} ${category.toLowerCase()}`
+      : category || "Item";
     
     return new Response(JSON.stringify({
       status: 'success',
       model: 'valentinafeve/yolos-fashionpedia',
       latencyMs,
-      result,
-      yolosTopLabels,
+      result: detections,
       bbox,
       category,
-      subcategory,
-      colorHex,
-      colorName,
+      colorHex: colorResult.hex,
+      colorName: colorResult.name,
       proposedTitle
     }), {
       status: 200,
