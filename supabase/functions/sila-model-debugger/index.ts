@@ -166,15 +166,22 @@ Deno.serve(async (req) => {
     const bbox = primary && isBox(primary.box) ? toNormBox(primary.box) : null;
 
     // Trim detections for debug overlay (avoid huge payloads)
-    const trimmed = [...preds]
+    console.log('[DEBUG] Raw preds before sanitization:', preds.length, 'detections');
+    const sanitized = [...preds]
       .sort((a,b) => b.score - a.score)
       .slice(0, 8)
-      .map(p => ({
-        score: Math.round(p.score * 1000) / 1000,
-        label: p.label,
-        box: toNormBox(p.box)
-      }))
-      .filter(p => p.box !== null); // Remove entries with malformed boxes
+      .map((p, i) => {
+        const box = toNormBox(p.box);
+        console.log(`[DEBUG] Detection ${i}: label="${p.label}", score=${p.score}, box=${JSON.stringify(p.box)} -> ${box ? JSON.stringify(box) : 'FILTERED OUT'}`);
+        return {
+          score: Math.round(p.score * 1000) / 1000,
+          label: p.label,
+          box
+        };
+      });
+    
+    const trimmed = sanitized.filter(p => p.box !== null);
+    console.log('[DEBUG] After sanitization:', sanitized.length, 'processed,', trimmed.length, 'kept');
 
     const latencyMs = Math.round(performance.now() - t0);
     return new Response(JSON.stringify({
