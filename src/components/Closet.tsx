@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
 import { waitUntilPublic, detectYolosByUrl, mapLabelToCategory, generateTitle, pickPrimary } from '@/lib/yolos';
-import { snapToPalette } from '@/utils/color';
+
 import SmartCropImg from '@/components/SmartCropImg';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -36,43 +36,36 @@ interface ClosetProps {
   user: any;
 }
 
-// Color extraction helper (simplified for demo)
-async function dominantHexFromUrl(url: string): Promise<string> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d')!;
-      canvas.width = 64;
-      canvas.height = 64;
-      ctx.drawImage(img, 0, 0, 64, 64);
-      
-      const { data } = ctx.getImageData(0, 0, 64, 64);
-      let r = 0, g = 0, b = 0, count = 0;
-      
-      for (let i = 0; i < data.length; i += 4) {
-        const R = data[i], G = data[i + 1], B = data[i + 2], A = data[i + 3];
-        if (A < 10) continue;
-        
-        const max = Math.max(R, G, B), min = Math.min(R, G, B);
-        const sat = (max - min) / Math.max(max, 1);
-        if (max > 245 && sat < 0.08) continue; // ignore white bg
-        
-        r += R; g += G; b += B; count++;
-      }
-      
-      if (count === 0) { r = 255; g = 255; b = 255; count = 1; }
-      r = Math.round(r / count);
-      g = Math.round(g / count);
-      b = Math.round(b / count);
-      
-      const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-      resolve(hex);
-    };
-    img.onerror = () => resolve('#000000');
-    img.src = url;
-  });
+// Helper to process edge function response
+function processEdgeResponse(res: any) {
+  const pretty = (s?: string | null) => s ? s.trim() : null;
+
+  const title = pretty(res.proposedTitle) ?? (
+    pretty(res.colorName) && pretty(res.category)
+      ? `${res.colorName} ${res.category.toLowerCase()}`
+      : 'Item'
+  );
+
+  const bboxArray = res.bbox 
+    ? [res.bbox.xmin, res.bbox.ymin, res.bbox.xmax, res.bbox.ymax]
+    : null;
+
+  return {
+    title,
+    category: pretty(res.category),
+    subcategory: null, // Always null for now
+    color_name: pretty(res.colorName),
+    color_hex: pretty(res.colorHex),
+    bbox: bboxArray,
+    yolos_top_labels: Array.isArray(res.result)
+      ? res.result.sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
+          .slice(0, 3)
+          .map((p: any) => String(p.label || ''))
+          .filter(Boolean)
+      : null,
+    yolos_latency_ms: res.latencyMs ?? null,
+    yolos_model: res.model ?? null,
+  };
 }
 
 export default function Closet({ user }: ClosetProps) {
@@ -186,50 +179,20 @@ export default function Closet({ user }: ClosetProps) {
       // Get public URL and wait until it's accessible
       const { data: pub } = supabase.storage.from('sila').getPublicUrl(imagePath);
       const publicUrl = pub.publicUrl;
-      console.log('[FLOW] have path', imagePath);
-      console.log('[FLOW] publicUrl', publicUrl);
+      console.info('[FLOW] have path', imagePath);
+      console.info('[FLOW] publicUrl', publicUrl);
       
       await waitUntilPublic(publicUrl);
       
       // Call YOLOS edge function
+      console.info('[YOLOS] invoking', { publicUrl, threshold: 0.12 });
       const yolos = await detectYolosByUrl(publicUrl, 0.12);
-      console.log('[YOLOS] result', yolos);
+      console.info('[YOLOS] result', yolos);
       
-      const preds = Array.isArray(yolos.result) ? yolos.result : [];
-      const primary = pickPrimary(preds);
-      
-      let category: string | null = null;
-      let bbox: number[] | null = null;
+      // Process edge response - this is the single source of truth
+      const updatePayload = processEdgeResponse(yolos);
+      console.info('[YOLOS] persist', updatePayload);
 
-      if (primary) {
-        category = mapLabelToCategory(primary.label);
-        console.log('[MAP] main.label -> category', primary?.label, category);
-        bbox = [primary.box.xmin, primary.box.ymin, primary.box.xmax, primary.box.ymax].map(n => Math.round(Number(n)));
-      }
-
-      // Always compute/snap color from full image
-      const dominantHex = await dominantHexFromUrl(publicUrl);
-      const { name: colorName, hex: colorHex } = snapToPalette(dominantHex);
-
-      const title = generateTitle({ colorName, category });
-      console.log('[TITLE] color/category ->', colorName, category, title);
-
-      // Build update payload - only persist category-level data
-      const updatePayload: any = {
-        title,
-        category,
-        color_name: colorName,
-        color_hex: colorHex,
-        bbox,
-        yolos_top_labels: Array.isArray(preds)
-          ? preds.sort((a,b)=> (b.score??0)-(a.score??0)).slice(0,3).map(p => String(p.label || '')).filter(Boolean)
-          : null,
-        yolos_latency_ms: yolos.latencyMs ?? null,
-        yolos_model: yolos.model ?? null,
-      };
-
-      console.log('[YOLOS] Persisting:', updatePayload);
-      
       const { error: updateErr } = await supabase
         .from('items')
         .update(updatePayload)
@@ -243,10 +206,10 @@ export default function Closet({ user }: ClosetProps) {
           variant: 'destructive'
         });
       } else {
-        console.log('[YOLOS] Persist OK');
+        console.info('[YOLOS] OK');
         toast({
           title: 'Analysis complete',
-          description: `Detected: ${category || 'item'}, Color: ${colorName || 'unknown'}`
+          description: `Detected: ${updatePayload.category || 'item'}, Color: ${updatePayload.color_name || 'unknown'}`
         });
       }
       
@@ -428,12 +391,13 @@ export default function Closet({ user }: ClosetProps) {
                   onClick={() => toggleItemSelection(item.id)}
                 >
                   <div className="aspect-square relative">
-                    <SmartCropImg 
-                      src={imageUrl}
-                      bbox={item.bbox || null}
-                      alt={item.title || 'Closet item'}
-                      className="aspect-square rounded-xl"
-                    />
+                       <SmartCropImg 
+                         src={imageUrl}
+                         bbox={Array.isArray(item.bbox) && item.bbox.length === 4 ? item.bbox : null}
+                         alt={item.title || 'Closet item'}
+                         className="aspect-square rounded-xl"
+                         padding={0.1}
+                       />
                     <div className="absolute top-2 right-2 bg-background/80 rounded-full p-1">
                       {selectedItems.has(item.id) ? (
                         <CheckSquare className="w-5 h-5 text-primary" />
@@ -446,12 +410,12 @@ export default function Closet({ user }: ClosetProps) {
                     <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
                      <div className="flex flex-wrap gap-1 mb-2">
                        {item.category && (
-                         <Badge className="text-xs bg-violet-600 text-white hover:bg-violet-700">
+                         <Badge variant="secondary" className="text-xs">
                            {item.category}
                          </Badge>
                        )}
                        {item.subcategory && (
-                         <Badge className="text-xs bg-violet-100 text-violet-900 hover:bg-violet-200">
+                         <Badge variant="outline" className="text-xs">
                            {item.subcategory}
                          </Badge>
                        )}
@@ -465,23 +429,24 @@ export default function Closet({ user }: ClosetProps) {
                 <Link to={`/item/${item.id}`} className="block">
                   <Card className="overflow-hidden hover:shadow-lg transition-shadow">
                     <div className="aspect-square relative">
-                      <SmartCropImg 
-                        src={imageUrl}
-                        bbox={item.bbox || null}
-                        alt={item.title || 'Closet item'}
-                        className="aspect-square rounded-xl"
-                      />
+                       <SmartCropImg 
+                         src={imageUrl}
+                         bbox={Array.isArray(item.bbox) && item.bbox.length === 4 ? item.bbox : null}
+                         alt={item.title || 'Closet item'}
+                         className="aspect-square rounded-xl"
+                         padding={0.1}
+                       />
                     </div>
                     <CardContent className="p-4">
                       <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
                        <div className="flex flex-wrap gap-1 mb-2">
                          {item.category && (
-                           <Badge className="text-xs bg-violet-600 text-white hover:bg-violet-700">
+                           <Badge variant="secondary" className="text-xs">
                              {item.category}
                            </Badge>
                          )}
                          {item.subcategory && (
-                           <Badge className="text-xs bg-violet-100 text-violet-900 hover:bg-violet-200">
+                           <Badge variant="outline" className="text-xs">
                              {item.subcategory}
                            </Badge>
                          )}

@@ -3,8 +3,9 @@ import React, { useLayoutEffect, useRef, useState } from "react";
 type SmartCropImgProps = {
   src: string;
   alt?: string;
-  bbox?: { xmin: number; ymin: number; xmax: number; ymax: number } | null;
+  bbox?: { xmin: number; ymin: number; xmax: number; ymax: number } | number[] | null;
   className?: string;
+  padding?: number;
 };
 
 /**
@@ -18,6 +19,7 @@ export default function SmartCropImg({
   alt = "",
   bbox,
   className = "",
+  padding = 0.1,
 }: SmartCropImgProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageStyle, setImageStyle] = useState<React.CSSProperties>({});
@@ -42,8 +44,16 @@ export default function SmartCropImg({
       return;
     }
 
-    // Get bbox coordinates (handle both pixel and normalized)
-    let { xmin, ymin, xmax, ymax } = bbox;
+    // Get bbox coordinates (handle both pixel and normalized, and array format)
+    let xmin: number, ymin: number, xmax: number, ymax: number;
+    
+    if (Array.isArray(bbox) && bbox.length === 4) {
+      [xmin, ymin, xmax, ymax] = bbox;
+    } else if (bbox && typeof bbox === 'object' && 'xmin' in bbox) {
+      ({ xmin, ymin, xmax, ymax } = bbox);
+    } else {
+      return;
+    }
     
     // If coordinates are between 0-1, assume normalized
     if (xmax <= 1 && ymax <= 1) {
@@ -53,10 +63,10 @@ export default function SmartCropImg({
       ymax *= natH;
     }
 
-    // Add 10% padding
+    // Add padding
     const bw = xmax - xmin;
     const bh = ymax - ymin;
-    const pad = 0.1;
+    const pad = padding;
     
     xmin = Math.max(0, xmin - bw * pad);
     ymin = Math.max(0, ymin - bh * pad);
