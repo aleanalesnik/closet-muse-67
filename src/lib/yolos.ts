@@ -1,95 +1,80 @@
 // src/lib/yolos.ts
-//
-// What this file provides:
-// - waitUntilPublic(publicUrl): HEAD polls until the storage URL is actually readable
-// - invokeYolosEdge(publicUrl, threshold): calls the Supabase Edge function
-// - detectYolosByUrl(publicUrl, threshold): backwards-compatible alias to invokeYolosEdge
-// - normalizeBbox(bbox): ensures we store ONE canonical format [x,y,w,h] in 0..1
-// - persistEdgeResult(itemId, edge): updates the 'items' row with ONLY edge values
-//
-// NOTE: The edge now returns: {
-//   status: "success",
-//   model, latencyMs, result, yolosTopLabels,
-//   category, bbox:[x,y,w,h] | null, colorName, colorHex, proposedTitle
-// }
-
 import { supabase } from "@/lib/supabase";
 
-export type EdgeSuccess = {
-  status: "success";
-  model: string;
-  latencyMs: number;
-  result: any[];
-  yolosTopLabels: string[];
-  category: string;            // e.g., "Bottoms", "Bags", ...
-  bbox: number[] | null;       // normalized [x,y,w,h] in 0..1
-  colorName: string;           // e.g., "Black", "Beige"
-  colorHex: string;            // e.g., "#000000"
-  proposedTitle: string;       // e.g., "Black pants"
-};
-
-// ---- Public URL read-iness ---------------------------------------------------
-
+/** Wait until a Supabase public storage URL is readable */
 export async function waitUntilPublic(url: string) {
-  // Exponential backoff: 250ms -> ~8s total
   for (let i = 0; i < 6; i++) {
     const r = await fetch(url, { method: "HEAD", cache: "no-store" }).catch(() => null);
     if (r?.ok) return;
-    await new Promise((res) => setTimeout(res, 250 * Math.pow(2, i)));
+    await new Promise(res => setTimeout(res, 250 * Math.pow(2, i))); // 250ms→8s
   }
   throw new Error("Public URL never became readable");
 }
 
-// ---- Edge invocation ---------------------------------------------------------
+export type BBox = [number, number, number, number]; // [x1,y1,x2,y2] absolute pixels or normalized (client decides)
+export type YolosRawDet = { score:number; label:string; box?:{ xmin:number; ymin:number; xmax:number; ymax:number } };
 
-export async function invokeYolosEdge(publicUrl: string, threshold = 0.12) {
-  const { data, error } = await supabase.functions.invoke<EdgeSuccess>("sila-model-debugger", {
+export type YolosEdgeSuccess = {
+  status: "success";
+  model: string;
+  latencyMs: number;
+  result: YolosRawDet[];
+  yolosTopLabels: string[];
+  category: string;
+  bbox: { xmin:number; ymin:number; xmax:number; ymax:number } | null;
+  colorName: string | null;
+  colorHex: string | null;
+  proposedTitle: string | null;
+};
+
+export type YolosEdgeFail = {
+  status: "fail";
+  stop?: string;
+  error?: string;
+  latencyMs?: number;
+};
+
+export type YolosEdgeResponse = YolosEdgeSuccess | YolosEdgeFail;
+
+export async function detectYolosByUrl(publicUrl: string, threshold = 0.12): Promise<YolosEdgeResponse> {
+  // Critical: do NOT throw on non-2xx, we always want the JSON body.
+  const { data, error } = await supabase.functions.invoke("sila-model-debugger", {
     body: { imageUrl: publicUrl, threshold },
+    // @ts-ignore - supabase-js accepts this option
+    throwOnError: false,
   });
-  if (error) throw error;
-  if (!data || data.status !== "success") {
-    throw new Error("YOLOS edge failed: " + JSON.stringify(data));
+  if (error && !data) {
+    return { status: "fail", stop: "invoke", error: String(error) };
   }
-  return data;
+  return (data as YolosEdgeResponse) ?? { status: "fail", stop: "empty" };
 }
 
-// Back-compat name used elsewhere in your app:
-export async function detectYolosByUrl(publicUrl: string, threshold = 0.12) {
-  return invokeYolosEdge(publicUrl, threshold);
+/** Normalize bbox to [x1,y1,x2,y2] numbers. Returns null if invalid. */
+export function normalizeBBox(b: any): BBox | null {
+  if (!b) return null;
+  if (Array.isArray(b) && b.length === 4) {
+    const [x1,y1,x2,y2] = b.map(Number);
+    if ([x1,y1,x2,y2].some(n => !Number.isFinite(n))) return null;
+    if (x2 <= x1 || y2 <= y1) return null;
+    return [x1,y1,x2,y2];
+  }
+  if (typeof b === "object" && b !== null) {
+    const x1 = Number(b.xmin), y1 = Number(b.ymin), x2 = Number(b.xmax), y2 = Number(b.ymax);
+    if ([x1,y1,x2,y2].some(n => !Number.isFinite(n))) return null;
+    if (x2 <= x1 || y2 <= y1) return null;
+    return [x1,y1,x2,y2];
+  }
+  return null;
 }
 
-// ---- BBox normalization ------------------------------------------------------
-
-export function normalizeBbox(bbox: unknown): number[] | null {
-  // We only accept an array of 4 finite numbers in 0..1 -> [x,y,w,h]
-  if (!Array.isArray(bbox) || bbox.length !== 4) return null;
-  const nums = bbox.map((n) => (typeof n === "number" && isFinite(n) ? n : NaN));
-  if (nums.some((n) => Number.isNaN(n))) return null;
-  const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
-  const [x, y, w, h] = nums as number[];
-  return [clamp01(x), clamp01(y), clamp01(w), clamp01(h)];
-}
-
-// ---- Persistence to the items table -----------------------------------------
-
-export async function persistEdgeResult(itemId: string, edge: EdgeSuccess) {
-  // We persist ONLY what the edge is authoritative for.
-  const bbox = normalizeBbox(edge.bbox);
-
-  const updates = {
-    title: edge.proposedTitle,
-    category: edge.category,
-    subcategory: null as unknown as string | null, // user sets later
-    color_name: edge.colorName,
-    color_hex: edge.colorHex,
-    bbox, // numeric[] or null (normalized)
-    yolos_model: edge.model,
-    yolos_latency_ms: edge.latencyMs,
-    yolos_top_labels: edge.yolosTopLabels as unknown as string[], // keep if the column exists
-  };
-
-  const { error } = await supabase.from("items").update(updates).eq("id", itemId);
-  if (error) throw error;
+/** Build a nice default title (only if backend didn't provide one). */
+export function buildTitle(colorName: string | null | undefined, category: string | null | undefined) {
+  const c = (colorName ?? "").trim();
+  const k = (category ?? "").trim();
+  if (c && k) return `${c} ${k.toLowerCase()}`;
+  if (k) return k;
+  if (c) return `${c} item`;
+  return "Clothing item";
 }
 
 // -----------------------------------------------------------------------------
