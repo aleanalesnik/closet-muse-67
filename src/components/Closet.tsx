@@ -290,7 +290,9 @@ export default function Closet({ user }: ClosetProps) {
         id: itemId,
         ...updatePayload,
         image_path: imagePath,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        // Make sure isUploading is false for completed items
+        isUploading: false
       };
       setItems(prev => [newItem, ...prev]);
       

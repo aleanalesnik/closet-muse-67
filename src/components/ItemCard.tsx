@@ -98,9 +98,13 @@ export default function ItemCard({
   }, [imageUrl, item.id]);
 
   const isUploading = item.isUploading;
-  const showOverlay = (debugDetections || isUploading) && detectionPreds && detectionPreds.length > 0;
+  // Only show overlay when explicitly requested (debug mode) or during upload
+  // For completed items, only show when debug mode is on
+  const showOverlay = detectionPreds && detectionPreds.length > 0 && (
+    debugDetections || (isUploading && item.status === 'analyzing')
+  );
   
-  console.log('[DEBUG ItemCard] Item:', item.id, 'debugDetections:', debugDetections, 'detectionPreds:', detectionPreds, 'showOverlay:', showOverlay);
+  console.log('[DEBUG ItemCard] Item:', item.id, 'debugDetections:', debugDetections, 'isUploading:', isUploading, 'status:', item.status, 'detectionPreds:', detectionPreds, 'showOverlay:', showOverlay);
 
   const cardContent = (
     <Card className={`overflow-hidden transition-all ${
