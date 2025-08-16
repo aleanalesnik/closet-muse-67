@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
-import { PALETTE } from "@/lib/aiMapping";
+import { PALETTE } from "@/utils/color";
 import SmartCropImg from "@/components/SmartCropImg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +20,7 @@ type ItemRow = {
   color_name: string | null;
   color_hex: string | null;
   image_path: string;
-  bbox?: number[] | null;
+  bbox?: { xmin: number; ymin: number; xmax: number; ymax: number } | number[] | null;
 };
 
 
@@ -162,15 +162,17 @@ export default function ItemDetailPage() {
       <div className="grid md:grid-cols-2 gap-6">
         <div className="rounded-xl overflow-hidden bg-muted flex items-center justify-center" style={{ aspectRatio: '4/3' }}>
           {imageUrl ? (
-            <SmartCropImg 
-              src={imageUrl}
-              bbox={item?.bbox as [number, number, number, number] | null}
-              aspect={4/3}
-              pad={0.06}
-              label={item?.subcategory || item?.category || ""}
-              alt={title || "item"}
-              className="w-full max-w-[460px] rounded-2xl"
-            />
+          <SmartCropImg 
+            src={imageUrl}
+            bbox={item?.bbox ? 
+              Array.isArray(item.bbox) 
+                ? { xmin: item.bbox[0], ymin: item.bbox[1], xmax: item.bbox[2], ymax: item.bbox[3] }
+                : item.bbox
+              : null
+            }
+            alt={title || "item"}
+            className="aspect-[4/3] rounded-2xl"
+          />
           ) : (
             <div className="text-sm text-muted-foreground">No image</div>
           )}
