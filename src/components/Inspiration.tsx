@@ -5,8 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Upload, Loader2, Search, Clock, CheckCircle, XCircle } from 'lucide-react';
-import { uploadAndStartInspiration, runInspiration, pollInspiration } from '@/lib/inspo';
-import { getSignedImageUrl } from '@/lib/storage';
+import { uploadAndStartInspiration } from '@/lib/inspo';
 
 interface InspirationQuery {
   id: string;
@@ -71,17 +70,14 @@ export default function Inspiration({ user }: InspirationProps) {
       if (error) throw error;
       setQueries(data || []);
       
-      // Load signed URLs for all query images
+      // Load public URLs for all query images
       if (data && data.length > 0) {
-        const paths = data.map(q => q.image_path);
         const urls: {[key: string]: string} = {};
         
-        await Promise.all(
-          paths.map(async (path) => {
-            const url = await getSignedImageUrl(path);
-            if (url) urls[path] = url;
-          })
-        );
+        data.forEach((query) => {
+          const { data: pub } = supabase.storage.from('sila').getPublicUrl(query.image_path);
+          urls[query.image_path] = pub.publicUrl;
+        });
         
         setImageUrls(prev => ({...prev, ...urls}));
       }
@@ -105,17 +101,15 @@ export default function Inspiration({ user }: InspirationProps) {
       const detectionData = data || [];
       setDetections(detectionData);
       
-      // Load signed URLs for all detection crops
+      // Load public URLs for all detection crops
       if (detectionData.length > 0) {
         const paths = detectionData.filter(d => d.crop_path).map(d => d.crop_path!);
         const urls: {[key: string]: string} = {};
         
-        await Promise.all(
-          paths.map(async (path) => {
-            const url = await getSignedImageUrl(path);
-            if (url) urls[path] = url;
-          })
-        );
+        paths.forEach((path) => {
+          const { data: pub } = supabase.storage.from('sila').getPublicUrl(path);
+          urls[path] = pub.publicUrl;
+        });
         
         setImageUrls(prev => ({...prev, ...urls}));
         
@@ -148,16 +142,14 @@ export default function Inspiration({ user }: InspirationProps) {
           if (!error && data) {
             matches[detection.id] = data;
             
-            // Load signed URLs for matched item images
+            // Load public URLs for matched item images
             const imagePaths = data.map((item: MatchedItem) => item.image_path);
             const urls: {[key: string]: string} = {};
             
-            await Promise.all(
-              imagePaths.map(async (path) => {
-                const url = await getSignedImageUrl(path);
-                if (url) urls[path] = url;
-              })
-            );
+            imagePaths.forEach((path) => {
+              const { data: pub } = supabase.storage.from('sila').getPublicUrl(path);
+              urls[path] = pub.publicUrl;
+            });
             
             setImageUrls(prev => ({...prev, ...urls}));
           }
@@ -177,7 +169,7 @@ export default function Inspiration({ user }: InspirationProps) {
     setUploading(true);
     try {
       // Upload and start the inspiration query
-      const { queryId } = await uploadAndStartInspiration(file);
+      const { imagePath, queryId } = await uploadAndStartInspiration(file);
       
       toast({ 
         title: 'Photo uploaded', 
@@ -188,28 +180,54 @@ export default function Inspiration({ user }: InspirationProps) {
       await loadQueries();
       setActiveQuery(queryId);
       
-      // Run the inspiration process
-      await runInspiration(queryId);
+      // Get public URL for the uploaded image
+      const { data: pub } = supabase.storage.from('sila').getPublicUrl(imagePath);
+      const imageUrl = pub.publicUrl;
       
-      // Poll until the process is complete
-      const result = await pollInspiration(queryId);
+      // Call sila-model-debugger for detection
+      const projectRef = 'tqbjbugwwffdfhihpkcg'; // Supabase project ref
+      const anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxYmpidWd3d2ZmZGZoaWhwa2NnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMTcwOTUsImV4cCI6MjA3MDY5MzA5NX0.hDjr0Ymv-lK_ra08Ye9ya2wCYOM_LBYs2jgJVs4mJlA';
+      const fnUrl = `https://${projectRef}.functions.supabase.co/sila-model-debugger`;
       
-      if (result.status === 'error') {
+      const detectRes = await fetch(fnUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${anonKey}`,
+          'apikey': anonKey,
+        },
+        body: JSON.stringify({ imageUrl, threshold: 0.5 }),
+      });
+      
+      const detectJson = await detectRes.json();
+      
+      if (!detectRes.ok || detectJson?.status !== 'success') {
         toast({ 
-          title: 'Processing failed', 
-          description: result.error || 'Unknown error occurred',
+          title: 'Detection failed', 
+          description: 'Could not detect items in the image',
           variant: 'destructive' 
         });
-      } else {
-        toast({ 
-          title: 'Inspiration ready!', 
-          description: 'Your style matches are ready to view.'
-        });
-        
-        // Reload queries and detections to show results
-        await loadQueries();
-        await loadDetections(queryId);
+        return;
       }
+      
+      // Convert sila-model-debugger results to Detection objects
+      const results = detectJson.result as Array<{label: string; score: number; box: {xmin: number; ymin: number; xmax: number; ymax: number}}>;
+      const fakeDetections: Detection[] = results.map((result, index) => ({
+        id: `${queryId}-${index}`,
+        query_id: queryId,
+        bbox: [result.box.xmin, result.box.ymin, result.box.xmax, result.box.ymax],
+        category: result.label,
+        // No crop_path, mask_path, or embedding - will show as loading/no matches
+      }));
+      
+      // Set detections directly for immediate display
+      setDetections(fakeDetections);
+      
+      toast({ 
+        title: 'Detection complete!', 
+        description: `Found ${results.length} items in your photo.`
+      });
+      
     } catch (error: any) {
       toast({ 
         title: 'Upload failed', 
