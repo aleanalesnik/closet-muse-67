@@ -70,24 +70,48 @@ function resultToDetections(result: any[]): YolosPred[] {
     .filter((p: any) => p?.box && typeof p?.score === 'number' && p?.label)
     .sort((a: any, b: any) => b.score - a.score)
     .slice(0, 3)
-    .map((p: any) => {
+    .map((p: any, index: number) => {
+      console.log(`[DEBUG] Raw detection ${index}:`, {
+        label: p.label,
+        score: p.score,
+        box: p.box,
+        boxType: Array.isArray(p.box) ? 'array' : typeof p.box
+      });
+
       // Convert [x1,y1,x2,y2] format to {xmin,ymin,xmax,ymax} format
       let box;
       if (Array.isArray(p.box) && p.box.length === 4) {
         const [x1, y1, x2, y2] = p.box;
         box = { xmin: x1, ymin: y1, xmax: x2, ymax: y2 };
+        console.log(`[DEBUG] Array box ${index}: [${x1}, ${y1}, ${x2}, ${y2}] -> {xmin: ${x1}, ymin: ${y1}, xmax: ${x2}, ymax: ${y2}}`);
       } else if (p.box && typeof p.box === 'object') {
         // Already in correct format
         box = p.box;
+        console.log(`[DEBUG] Object box ${index}:`, box);
       } else {
+        console.log(`[DEBUG] Invalid box ${index}:`, p.box);
         return null; // Invalid box
       }
+
+      // Validate box coordinates are reasonable (0-1 normalized)
+      const isValidCoords = box.xmin >= 0 && box.xmin < 1 && 
+                           box.ymin >= 0 && box.ymin < 1 &&
+                           box.xmax > box.xmin && box.xmax <= 1 &&
+                           box.ymax > box.ymin && box.ymax <= 1;
       
-      return { 
+      if (!isValidCoords) {
+        console.log(`[DEBUG] Invalid coordinates for box ${index}:`, box, 'Coords should be normalized 0-1');
+        return null;
+      }
+      
+      const result = { 
         label: String(p.label), 
         score: Number(p.score), 
         box 
       };
+      
+      console.log(`[DEBUG] Final detection ${index}:`, result);
+      return result;
     })
     .filter(Boolean); // Remove null entries
 }
