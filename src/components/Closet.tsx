@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
 import { waitUntilPublic } from '@/utils/storage';
-import { runYolos } from '@/lib/yolos';
-import { pickPrimary, mapLabelToTaxonomy, buildTitle } from '@/lib/mapYolos';
+import { runYolos, pickPrimary, mapLabelToCategory, generateTitle } from '@/lib/yolos';
 import { snapToPalette } from '@/utils/color';
 import SmartCropImg from '@/components/SmartCropImg';
 import { Button } from '@/components/ui/button';
@@ -198,12 +197,11 @@ export default function Closet({ user }: ClosetProps) {
 
       const primary = pickPrimary(preds);
       let category: string | null = null;
-      let subcategory: string | null = null;
       let bbox: number[] | null = null;
 
       if (primary) {
-        const mapped = mapLabelToTaxonomy(primary.label);
-        if (mapped) { category = mapped.category; subcategory = mapped.subcategory; }
+        category = mapLabelToCategory(primary.label);
+        console.log('[MAP] main.label -> category', primary?.label, category);
         bbox = [primary.box.xmin, primary.box.ymin, primary.box.xmax, primary.box.ymax].map(n => Math.round(Number(n)));
       }
 
@@ -211,17 +209,17 @@ export default function Closet({ user }: ClosetProps) {
       const dominantHex = await dominantHexFromUrl(imageUrl);
       const { name: colorName, hex: colorHex } = snapToPalette(dominantHex);
 
-      const title = buildTitle(colorName, category ? { category, subcategory: subcategory || '' } : null);
+      const title = generateTitle({ colorName, category });
+      console.log('[TITLE] color/category ->', colorName, category, title);
 
-      // Build update payload with safe types (types aligned with DB)
+      // Build update payload with safe types - only persist category-level data
       const updatePayload: any = {
         title,
         category,
-        subcategory,
         color_name: colorName,
         color_hex: colorHex,
         bbox,
-        // Optional: store top 3 labels for UI "AI chips"
+        // Optional: store top 3 labels for debugging
         yolos_top_labels: Array.isArray(preds)
           ? preds.sort((a,b)=> (b.score??0)-(a.score??0)).slice(0,3).map(p => String(p.label || '')).filter(Boolean)
           : null,
@@ -245,7 +243,7 @@ export default function Closet({ user }: ClosetProps) {
         console.log('[YOLOS] Persist OK');
         toast({
           title: 'Analysis complete',
-          description: `Detected: ${subcategory || category || 'item'}, Color: ${colorName || 'unknown'}`
+          description: `Detected: ${category || 'item'}, Color: ${colorName || 'unknown'}`
         });
       }
       
@@ -443,18 +441,18 @@ export default function Closet({ user }: ClosetProps) {
                   </div>
                   <CardContent className="p-4">
                     <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
-                    <div className="flex flex-wrap gap-1 mb-2">
-                      {item.category && (
-                        <Badge className="text-xs bg-violet-600 text-white hover:bg-violet-700">
-                          {item.category}
-                        </Badge>
-                      )}
-                      {item.subcategory && (
-                        <Badge className="text-xs bg-violet-100 text-violet-900 hover:bg-violet-200">
-                          {item.subcategory}
-                        </Badge>
-                      )}
-                    </div>
+                     <div className="flex flex-wrap gap-1 mb-2">
+                       {item.category && (
+                         <Badge className="text-xs bg-violet-600 text-white hover:bg-violet-700">
+                           {item.category}
+                         </Badge>
+                       )}
+                       {item.subcategory && (
+                         <Badge className="text-xs bg-violet-100 text-violet-900 hover:bg-violet-200">
+                           {item.subcategory}
+                         </Badge>
+                       )}
+                     </div>
                     <div className="text-xs text-muted-foreground">
                       Added {new Date(item.created_at).toLocaleDateString()}
                     </div>
@@ -473,18 +471,18 @@ export default function Closet({ user }: ClosetProps) {
                     </div>
                     <CardContent className="p-4">
                       <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
-                      <div className="flex flex-wrap gap-1 mb-2">
-                        {item.category && (
-                          <Badge className="text-xs bg-violet-600 text-white hover:bg-violet-700">
-                            {item.category}
-                          </Badge>
-                        )}
-                        {item.subcategory && (
-                          <Badge className="text-xs bg-violet-100 text-violet-900 hover:bg-violet-200">
-                            {item.subcategory}
-                          </Badge>
-                        )}
-                      </div>
+                       <div className="flex flex-wrap gap-1 mb-2">
+                         {item.category && (
+                           <Badge className="text-xs bg-violet-600 text-white hover:bg-violet-700">
+                             {item.category}
+                           </Badge>
+                         )}
+                         {item.subcategory && (
+                           <Badge className="text-xs bg-violet-100 text-violet-900 hover:bg-violet-200">
+                             {item.subcategory}
+                           </Badge>
+                         )}
+                       </div>
                       <div className="text-xs text-muted-foreground">
                         Added {new Date(item.created_at).toLocaleDateString()}
                       </div>
