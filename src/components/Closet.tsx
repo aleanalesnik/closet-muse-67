@@ -65,6 +65,7 @@ function resultToDetections(result: any[]): YolosPred[] {
   if (!Array.isArray(result)) return [];
   
   console.log('[DEBUG] Converting detections result:', result);
+  console.log('[DEBUG] YOLOS API returned', result.length, 'detections');
   
   return result
     .filter((p: any) => p?.box && typeof p?.score === 'number' && p?.label)
@@ -93,15 +94,11 @@ function resultToDetections(result: any[]): YolosPred[] {
         return null; // Invalid box
       }
 
-      // Validate box coordinates are reasonable (0-1 normalized)
-      const isValidCoords = box.xmin >= 0 && box.xmin < 1 && 
-                           box.ymin >= 0 && box.ymin < 1 &&
-                           box.xmax > box.xmin && box.xmax <= 1 &&
-                           box.ymax > box.ymin && box.ymax <= 1;
-      
-      if (!isValidCoords) {
-        console.log(`[DEBUG] Invalid coordinates for box ${index}:`, box, 'Coords should be normalized 0-1');
-        return null;
+      // TEMPORARILY DISABLED: Skip validation to see malformed boxes
+      // TODO: Fix YOLOS API to return proper coordinates instead of [1,1,1,1]
+      const isAllOnes = box.xmin === 1 && box.ymin === 1 && box.xmax === 1 && box.ymax === 1;
+      if (isAllOnes) {
+        console.warn(`[DEBUG] YOLOS API returned malformed box [1,1,1,1] for ${p.label} - this should be fixed!`);
       }
       
       const result = { 
