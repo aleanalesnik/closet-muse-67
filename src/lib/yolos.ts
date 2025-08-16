@@ -7,12 +7,15 @@ export type TrimDet = { score: number; label: string; box: NormBbox | null };
 
 export type EdgeResponse = {
   status: "success";
-  category: string;                 // e.g., "Bottoms"
-  bbox: NormBbox | null;            // normalized or null
+  category: string;                 // e.g., "Tops", "Bottoms", "Bags", etc.
+  bbox: NormBbox | null;            // normalized [x1,y1,x2,y2] or null
+  proposedTitle: string;            // e.g., "Bags", "Dress" 
+  colorName: null;                  // always null from edge
+  colorHex: null;                   // always null from edge
+  yolosTopLabels: string[];         // for debug
   result: TrimDet[];                // trimmed detections for overlay
-  yolosTopLabels?: string[];
-  model: string;
   latencyMs: number;
+  model: string;
 };
 
 export async function waitUntilPublic(url: string) {
@@ -71,24 +74,26 @@ export async function analyzeImage(publicUrl: string) {
   const rgb = await getDominantColor(publicUrl).catch(() => null);
   const snapped = rgb ? snapToPalette(rgb) : null;
 
-  const category = edge.category;
+  const category = edge.category;                // Trust category from edge (CLIP-based)
   const categorySingular = singularizeCategory(category);
   const colorName = snapped?.name ?? null;
   const colorHex  = snapped?.hex ?? null;
 
+  // Start with proposedTitle from edge, update with color when available
   const title = colorName
     ? `${colorName} ${categorySingular}`
-    : categorySingular ? `${categorySingular}` : "item";
+    : edge.proposedTitle;
 
   return {
     // Persist exactly these:
     title,
-    category,                       // e.g., "Bottoms"
+    category,                       // e.g., "Tops", "Bottoms", "Bags", etc.
+    subcategory: null,              // Keep null until user chooses
     color_name: colorName,          // snapped or null
     color_hex:  colorHex,           // snapped or null
     bbox: edge.bbox,                // normalized [x1,y1,x2,y2] or null
     yolos_result: edge.result,      // trimmed array (for Debug overlay)
-    yolos_top_labels: edge.yolosTopLabels ?? [],
+    yolos_top_labels: edge.yolosTopLabels,
     yolos_model: edge.model,
     yolos_latency_ms: edge.latencyMs,
   };

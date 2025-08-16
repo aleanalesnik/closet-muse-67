@@ -1,6 +1,5 @@
 // supabase/functions/sila-model-debugger/index.ts
-// Minimal, reliable: classify & (when possible) return a normalized bbox + trimmed detections.
-// No color/proposedTitle here — those are computed client-side to avoid bad defaults.
+// YOLOS (bbox) + CLIP (category) + optional Grounding-DINO fallback
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,7 +18,9 @@ type ReqBody = {
 };
 
 const HF_ENDPOINT_URL = Deno.env.get("HF_ENDPOINT_URL") ?? "";
-const HF_TOKEN        = Deno.env.get("HF_TOKEN") ?? "";
+const HF_TOKEN = Deno.env.get("HF_TOKEN") ?? "";
+const HF_CLIP_MODEL = Deno.env.get("HF_CLIP_MODEL") ?? "openai/clip-vit-large-patch14";
+const HF_GDINO_MODEL = Deno.env.get("HF_GDINO_MODEL") ?? "IDEA-Research/grounding-dino-tiny";
 
 function isBox(b?: any): b is HFBox {
   return b && Number.isFinite(b.xmin) && Number.isFinite(b.ymin) && Number.isFinite(b.xmax) && Number.isFinite(b.ymax);
@@ -65,9 +66,8 @@ function toNormBox(b: any): [number,number,number,number] | null {
   let [x1, y1, x2, y2] = arr.map(Number);
   if (![x1,y1,x2,y2].every(Number.isFinite)) return null;
 
-  // TEMPORARILY DISABLED - let malformed boxes through to debug
-  // // guard: some models produce [1,1,1,1] when they mean "no box"
-  // if (x1 === 1 && y1 === 1 && x2 === 1 && y2 === 1) return null;
+  // Guard against degenerate boxes
+  if (x1 === 1 && y1 === 1 && x2 === 1 && y2 === 1) return null;
 
   const clamp = (v:number) => Math.min(1, Math.max(0, v));
   x1 = clamp(Math.min(x1, x2));
@@ -76,27 +76,107 @@ function toNormBox(b: any): [number,number,number,number] | null {
   y2 = clamp(Math.max(y1, y2));
 
   const w = x2 - x1, h = y2 - y1;
-  // TEMPORARILY DISABLED - allow tiny boxes through to debug
-  // if (w <= 0.01 || h <= 0.01) return null; // ignore tiny/degenerate boxes
+  if (w <= 0.01 || h <= 0.01) return null; // ignore tiny boxes
   return [x1, y1, x2, y2];
 }
 
 function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
   const garmentPreds = preds.filter(p => p && p.score >= minScore && isBox(p.box) && mapLabelToCategory(p.label) !== null);
   if (!garmentPreds.length) return null;
-  garmentPreds.sort((a, b) => b.score - a.score);
+  
+  // Sort by confidence first, then by area for tie-breaking
+  garmentPreds.sort((a, b) => {
+    const scoreDiff = b.score - a.score;
+    if (scoreDiff !== 0) return scoreDiff;
+    
+    const areaA = (a.box.xmax - a.box.xmin) * (a.box.ymax - a.box.ymin);
+    const areaB = (b.box.xmax - b.box.xmin) * (b.box.ymax - b.box.ymin);
+    return areaB - areaA;
+  });
+  
   return garmentPreds[0];
 }
 
-function deriveCategoryByVote(preds: HFPred[]): string {
-  const votes = new Map<string, number>();
-  for (const p of preds) {
-    const c = mapLabelToCategory(p.label);
-    if (!c) continue;
-    votes.set(c, (votes.get(c) ?? 0) + p.score);
+async function callCLIP(dataUrl: string): Promise<string> {
+  const labels = ["Tops","Bottoms","Outerwear","Dress","Bags","Shoes","Accessories"];
+  
+  const response = await fetch(`https://api-inference.huggingface.co/models/${HF_CLIP_MODEL}`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      inputs: dataUrl,
+      parameters: {
+        candidate_labels: labels,
+        multi_label: false
+      }
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`CLIP error ${response.status}: ${await response.text().catch(() => "<no body>")}`);
   }
-  if (!votes.size) return "Clothing";
-  return [...votes.entries()].sort((a,b) => b[1] - a[1])[0][0];
+
+  const result = await response.json();
+  
+  // CLIP returns {labels: [...], scores: [...]} where first item is highest confidence
+  if (result.labels && result.labels.length > 0) {
+    return result.labels[0];
+  }
+  
+  return "Clothing"; // fallback
+}
+
+async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
+  const prompts = {
+    "Bags": ["handbag","tote bag","shoulder bag","crossbody bag","bag","wallet"],
+    "Shoes": ["shoe","sneaker","boot","heel","flat","sandal"], 
+    "Accessories": ["belt","sunglasses","glasses","hat","watch","tie","scarf"]
+  };
+  
+  const labels = prompts[category as keyof typeof prompts];
+  if (!labels) return null;
+  
+  const text = labels.join(" . ");
+  
+  try {
+    const response = await fetch(`https://api-inference.huggingface.co/models/${HF_GDINO_MODEL}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        image: dataUrl,
+        text: text,
+        box_threshold: 0.25,
+        text_threshold: 0.25
+      }),
+    });
+
+    if (!response.ok) {
+      console.log(`[GDINO] Failed: ${response.status}`);
+      return null;
+    }
+
+    const result = await response.json();
+    
+    // Find highest scoring box
+    if (result && Array.isArray(result) && result.length > 0) {
+      const boxes = result.filter(r => r.box && r.score);
+      if (boxes.length > 0) {
+        boxes.sort((a, b) => b.score - a.score);
+        const box = boxes[0].box;
+        return [box.xmin, box.ymin, box.xmax, box.ymax];
+      }
+    }
+  } catch (err) {
+    console.log(`[GDINO] Exception: ${err}`);
+  }
+  
+  return null;
 }
 
 async function urlToDataUrl(url: string): Promise<string> {
@@ -152,20 +232,43 @@ Deno.serve(async (req) => {
 
     const t = typeof body.threshold === "number" ? body.threshold : 0.12;
 
-    // First pass @t; if no garment, second pass @0.06
+    // 1. YOLOS for bbox detection
     let preds = await callHF(dataUrl, t);
+    
+    // Lower threshold for small items that are often missed
+    const smallItemLabels = new Set(["shoe","bag, wallet","belt","glasses","hat"]);
+    const hasSmallItems = preds.some(p => smallItemLabels.has(p.label));
     let primary = pickPrimaryGarment(preds, t);
-    if (!primary) {
-      const t2 = Math.min(0.06, t);
+    
+    if (!primary && hasSmallItems) {
+      const t2 = Math.max(0.06, t * 0.5);
       const preds2 = await callHF(dataUrl, t2);
-      // If the model returns the same objects, merge and pick again.
       if (preds2?.length) preds = preds2;
       primary = pickPrimaryGarment(preds, t2);
     }
 
-    const category = primary ? (mapLabelToCategory(primary.label) ?? "Clothing") : deriveCategoryByVote(preds);
+    // 2. CLIP for category classification
+    let category: string;
+    try {
+      category = await callCLIP(dataUrl);
+      console.log(`[CLIP] Category: ${category}`);
+    } catch (err) {
+      console.log(`[CLIP] Failed: ${err}, using fallback`);
+      category = primary ? (mapLabelToCategory(primary.label) ?? "Clothing") : "Clothing";
+    }
 
-    const bbox = primary && isBox(primary.box) ? toNormBox(primary.box) : null;
+    // 3. Get bbox from YOLOS
+    let bbox = primary && isBox(primary.box) ? toNormBox(primary.box) : null;
+    
+    // 4. Grounding-DINO fallback for specific categories when no bbox
+    if (!bbox && ["Bags", "Shoes", "Accessories"].includes(category)) {
+      console.log(`[GDINO] Trying fallback for ${category}`);
+      const fallbackBox = await callGroundingDINO(dataUrl, category);
+      if (fallbackBox) {
+        bbox = toNormBox(fallbackBox);
+        console.log(`[GDINO] Found bbox: ${JSON.stringify(bbox)}`);
+      }
+    }
 
     // Trim detections for debug overlay (avoid huge payloads)
     console.log('[DEBUG] Raw preds before sanitization:', preds.length, 'detections');
@@ -188,12 +291,15 @@ Deno.serve(async (req) => {
     const latencyMs = Math.round(performance.now() - t0);
     return new Response(JSON.stringify({
       status: "success",
-      model: "valentinafeve/yolos-fashionpedia",
-      latencyMs,
       category,
       bbox,
+      proposedTitle: category,
+      colorName: null,
+      colorHex: null,
+      yolosTopLabels: trimmed.slice(0,3).map(d => d.label),
       result: trimmed,
-      yolosTopLabels: trimmed.slice(0,3).map(d => d.label)
+      latencyMs,
+      model: "valentinafeve/yolos-fashionpedia"
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {
