@@ -175,7 +175,8 @@ export default function OutfitBuilder({ user }: OutfitBuilderProps) {
                           style={{
                             backgroundImage: `url(${getImageUrl(item.image_path)})`,
                             backgroundSize: 'cover',
-                            backgroundPosition: 'center'
+                            backgroundPosition: 'center',
+                            backgroundRepeat: 'no-repeat'
                           }}
                           role="img"
                           aria-label={item.title || 'Item'}
@@ -250,7 +251,8 @@ export default function OutfitBuilder({ user }: OutfitBuilderProps) {
                             style={{
                               backgroundImage: `url(${getImageUrl(item.image_path)})`,
                               backgroundSize: 'cover',
-                              backgroundPosition: 'center'
+                              backgroundPosition: 'center',
+                              backgroundRepeat: 'no-repeat'
                             }}
                             role="img"
                             aria-label={item.title || 'Item'}

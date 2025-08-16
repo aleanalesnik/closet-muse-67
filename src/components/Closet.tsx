@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
 import { uploadAndProcessItem } from '@/lib/items';
-import { dominantHexFromImage, snapToPalette, buildTitle, SILA_PALETTE } from '@/lib/palette';
+import { dominantHexFromUrl, snapToPalette, mapLabel, makeTitle, isValidItemBox, humanizeFileName, toBBox, type Det } from '@/lib/aiMapping';
 import SmartCropImg from '@/components/SmartCropImg';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -125,103 +125,71 @@ export default function Closet({ user }: ClosetProps) {
           // Trigger bounding box drawing after setting result
           setTimeout(() => drawBoundingBoxes(detectJson), 100);
 
-          // 1) Extract bbox from edge function response or fallback to client extraction
-          let bboxArr: [number, number, number, number] | null = detectJson.proposedBbox || null;
-          
-          if (!bboxArr) {
-            // Fallback: extract from result if proposedBbox not available
-            const preds = Array.isArray(detectJson.result) ? detectJson.result : [];
-            const best = preds
-              .filter(p => p?.box)
-              .sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0))[0];
+          // 1) Process YOLOS detections for garment-level mapping
+          const dets = (detectJson?.result ?? []) as Det[];
+          const best = [...dets].sort((a, b) => b.score - a.score)[0];
+          const mapped = best ? mapLabel(best.label) : null;
 
-            if (best?.box) {
-              const { xmin, ymin, xmax, ymax } = best.box;
-              bboxArr = [xmin, ymin, xmax, ymax];
-            }
+          // 2) Extract color from full image (not bbox)
+          const colorHexRaw = await dominantHexFromUrl(imageUrl);
+          const { name: colorName, hex: colorHex } = snapToPalette(colorHexRaw);
+
+          // 3) Create garment-level title
+          const proposedTitle = makeTitle({
+            colorName,
+            mapped,
+            fallback: humanizeFileName(file.name)
+          });
+
+          // 4) Prepare update payload
+          const payload: any = {
+            title: proposedTitle,
+            color_hex: colorHex,
+            color_name: colorName,
+            yolos_latency_ms: detectJson.latencyMs ?? null,
+            yolos_model: detectJson.model ?? 'valentinafeve/yolos-fashionpedia',
+            yolos_result: dets,
+            yolos_top_labels: dets.slice(0, 3).map(d => d.label),
+          };
+
+          // 5) Only persist bbox and category if we detected a valid garment (not a part)
+          if (best && isValidItemBox(best) && mapped) {
+            payload.category = mapped.category;
+            payload.subcategory = mapped.subcategory;
+            payload.bbox = [best.box!.xmin, best.box!.ymin, best.box!.xmax, best.box!.ymax];
+          } else {
+            // Don't persist part bboxes or map part labels to categories
+            payload.category = null;
+            payload.subcategory = null;
+            payload.bbox = null;
           }
 
-          // 2) Detect color from public storage URL
-          try {
-            const rawHex = await dominantHexFromImage(imageUrl);
-            const snapped = snapToPalette(rawHex, SILA_PALETTE);
+          // 6) Update the database
+          const { error: updErr } = await supabase
+            .from('items')
+            .update(payload)
+            .eq('id', itemId);
 
-            // 3) Choose label for title
-            const results = detectJson.result as Array<{label:string; score:number; box:any}>;
-            const top = results.slice(0, 3).map(r => r.label);
+          if (!updErr) {
+            toast({
+              title: 'AI analysis complete',
+              description: `Detected: ${mapped?.subcategory || 'item'}, Color: ${colorName}`,
+            });
             
-            // Map first detection to category/subcategory (simplified mapping)
-            const firstLabel = results[0]?.label?.toLowerCase() || '';
-            let mapped = { category: null, subcategory: null };
-            
-            // Simple category mapping based on common YOLO labels
-            if (firstLabel.includes('shirt') || firstLabel.includes('top') || firstLabel.includes('blouse')) {
-              mapped = { category: 'top', subcategory: firstLabel.includes('shirt') ? 't-shirt' : 'shirt' };
-            } else if (firstLabel.includes('jeans') || firstLabel.includes('pants') || firstLabel.includes('trousers')) {
-              mapped = { category: 'bottom', subcategory: firstLabel.includes('jeans') ? 'jeans' : 'pants' };
-            } else if (firstLabel.includes('dress')) {
-              mapped = { category: 'dress', subcategory: 'dress' };
-            } else if (firstLabel.includes('shoe') || firstLabel.includes('boot') || firstLabel.includes('sneaker')) {
-              mapped = { category: 'shoes', subcategory: firstLabel.includes('sneaker') ? 'sneakers' : 'shoes' };
-            } else if (firstLabel.includes('bag') || firstLabel.includes('handbag')) {
-              mapped = { category: 'bag', subcategory: 'handbag' };
-            } else if (firstLabel.includes('jacket') || firstLabel.includes('coat')) {
-              mapped = { category: 'outerwear', subcategory: firstLabel.includes('jacket') ? 'jacket' : 'coat' };
-            }
-
-            const label = detectJson?.proposedTitle || mapped?.subcategory || mapped?.category || "clothing";
-            
-            // 4) Build final title (no brand)
-            const finalTitle = buildTitle({ label, colorName: snapped.name });
-
-            // 5) Persist to Supabase including bbox
-            const updatePayload: any = {
-              title: finalTitle,
-              color_name: snapped.name,
-              color_hex: snapped.hex,
-              category: mapped?.category ?? null,
-              subcategory: mapped?.subcategory ?? null,
-              bbox: bboxArr, // persist for smart cropping
-              yolos_latency_ms: detectJson.latencyMs ?? null,
-              yolos_model: detectJson.model ?? 'valentinafeve/yolos-fashionpedia',
-              yolos_result: results,
-              yolos_top_labels: top,
-            };
-
-            const { error: updErr } = await supabase
-              .from('items')
-              .update(updatePayload)
-              .eq('id', itemId);
-
-            if (!updErr) {
-              toast({ title: 'AI tags saved' });
-              console.log('[Persist complete] Title:', finalTitle, 'Color:', snapped, 'BBox:', bboxArr);
-            } else {
-              console.error('[Persist] error:', updErr);
-              toast({ title: 'Save failed', description: updErr.message, variant: 'destructive' });
-            }
-          } catch (colorError) {
-            console.error('Color extraction failed:', colorError);
-            // Fall back to basic YOLOS save without color/title
-            const results = detectJson.result as Array<{label:string; score:number; box:any}>;
-            const top = results.slice(0, 3).map(r => r.label);
-
-            const { error: updErr } = await supabase
-              .from('items')
-              .update({
-                bbox: bboxArr, // still save bbox for smart cropping
-                yolos_latency_ms: detectJson.latencyMs ?? null,
-                yolos_model: detectJson.model ?? 'valentinafeve/yolos-fashionpedia',
-                yolos_result: results,
-                yolos_top_labels: top,
-              })
-              .eq('id', itemId);
-
-            if (!updErr) {
-              toast({ title: 'YOLOS tags saved (color extraction failed)' });
-            } else {
-              toast({ title: 'Save failed', description: updErr.message, variant: 'destructive' });
-            }
+            // 7) Update local state with new data
+            setItems(prevItems => 
+              prevItems.map(item => 
+                item.id === itemId 
+                  ? { ...item, ...payload }
+                  : item
+              )
+            );
+          } else {
+            toast({
+              title: 'Save failed',
+              description: updErr.message,
+              variant: 'destructive',
+            });
           }
         }
       } catch (yolosError) {
@@ -573,9 +541,10 @@ export default function Closet({ user }: ClosetProps) {
                     )}
                     <SmartCropImg 
                       src={signedUrls[item.image_path] || supabase.storage.from('sila').getPublicUrl(item.image_path).data.publicUrl}
-                      bbox={item.bbox as any}
+                      bbox={toBBox(item.bbox) ? [toBBox(item.bbox)!.xmin, toBBox(item.bbox)!.ymin, toBBox(item.bbox)!.xmax, toBBox(item.bbox)!.ymax] : null}
                       aspect={1}
                       pad={0.08}
+                      label={item.subcategory || item.category || ""}
                       alt={item.title || 'Closet item'}
                       className="w-full rounded-xl shadow-sm"
                     />
@@ -630,9 +599,10 @@ export default function Closet({ user }: ClosetProps) {
                     )}
                     <SmartCropImg 
                       src={signedUrls[item.image_path] || supabase.storage.from('sila').getPublicUrl(item.image_path).data.publicUrl}
-                      bbox={item.bbox as any}
+                      bbox={toBBox(item.bbox) ? [toBBox(item.bbox)!.xmin, toBBox(item.bbox)!.ymin, toBBox(item.bbox)!.xmax, toBBox(item.bbox)!.ymax] : null}
                       aspect={1}
                       pad={0.08}
+                      label={item.subcategory || item.category || ""}
                       alt={item.title || 'Closet item'}
                       className="w-full rounded-xl shadow-sm"
                     />

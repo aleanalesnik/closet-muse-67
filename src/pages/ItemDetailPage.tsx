@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
-import { SILA_PALETTE } from "@/lib/palette";
+import { PALETTE } from "@/lib/aiMapping";
 import SmartCropImg from "@/components/SmartCropImg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -164,8 +164,10 @@ export default function ItemDetailPage() {
           {imageUrl ? (
             <SmartCropImg 
               src={imageUrl}
-              bbox={item.bbox as any}
+              bbox={item?.bbox ? [item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3]] : null}
               aspect={4/3}
+              pad={0.06}
+              label={item?.subcategory || item?.category || ""}
               alt={title || "item"}
               className="w-full max-w-[460px] rounded-2xl"
             />
@@ -213,14 +215,14 @@ export default function ItemDetailPage() {
           <div className="space-y-2">
             <label className="text-sm text-muted-foreground">Color</label>
             <div className="grid grid-cols-8 gap-2">
-              {SILA_PALETTE.map(c => (
+              {PALETTE.map(c => (
                 <button
                   key={c.name}
                   type="button"
                   onClick={()=>pickColor(c.name, c.hex)}
                   className={`h-9 w-9 rounded-full border ${colorName===c.name ? "ring-2 ring-offset-2 ring-black" : "opacity-90"}`}
                   title={c.name}
-                  style={{ background: c.hex.startsWith('linear-gradient') ? c.hex : c.hex }}
+                  style={{ background: c.hex }}
                 />
               ))}
             </div>
