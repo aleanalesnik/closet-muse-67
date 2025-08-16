@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
-import { waitUntilPublic, detectYolosByUrl } from '@/lib/yolos';
+import { waitUntilPublic, analyzeImage } from '@/lib/yolos';
 import SmartCropImg from '@/components/SmartCropImg';
 import DetectionsOverlay from '@/components/DetectionsOverlay';
 import ItemCard from '@/components/ItemCard';
@@ -59,22 +59,19 @@ function asBboxArray(b: any): number[] | null {
   return null;
 }
 
-// Helper to process edge function response
-function processEdgeResponse(res: any) {
-  const pretty = (s?: string | null) => s ? s.trim() : null;
-
-  return {
-    title: pretty(res.proposedTitle) || 'Item',
-    category: pretty(res.category),
-    subcategory: null, // Always null after upload - user sets later
-    color_name: pretty(res.colorName),
-    color_hex: res.colorHex,
-    bbox: Array.isArray(res.bbox) ? res.bbox : null, // Normalized [x, y, w, h] from edge
-    yolos_model: res.model || 'valentinafeve/yolos-fashionpedia',
-    yolos_latency_ms: res.latencyMs || null,
-    yolos_top_labels: res.yolosTopLabels || null,
-    yolos_result: res.result || null
-  };
+// Helper to convert yolos result to detections for overlay
+function resultToDetections(result: any[]): YolosPred[] {
+  if (!Array.isArray(result)) return [];
+  
+  return result
+    .filter((p: any) => p?.box && typeof p?.score === 'number' && p?.label)
+    .sort((a: any, b: any) => b.score - a.score)
+    .slice(0, 3)
+    .map((p: any) => ({ 
+      label: String(p.label), 
+      score: Number(p.score), 
+      box: p.box 
+    }));
 }
 
 export default function Closet({ user }: ClosetProps) {
@@ -212,33 +209,21 @@ export default function Closet({ user }: ClosetProps) {
       
       await waitUntilPublic(publicUrl);
       
-      console.info('[YOLOS] invoking sila-model-debugger', { publicUrl, threshold: 0.12 });
-      const { data: yolos, error: yolosError } = await supabase.functions.invoke('sila-model-debugger', {
-        body: { 
-          imageUrl: publicUrl,
-          threshold: 0.12 
-        }
-      });
-      
-      if (yolosError) throw yolosError;
-      console.info('[YOLOS] result', yolos);
+      console.info('[YOLOS] analyzing image with new API');
+      const analysis = await analyzeImage(publicUrl);
+      console.info('[YOLOS] analysis result', analysis);
       
       // Store detections in memory for overlay
-      if (yolos.status === 'success' && Array.isArray(yolos.result)) {
-        const preds: YolosPred[] = yolos.result
-          .filter((p: any) => p?.box && typeof p?.score === 'number' && p?.label)
-          .sort((a: any, b: any) => b.score - a.score)
-          .slice(0, 3)
-          .map((p: any) => ({ 
-            label: String(p.label), 
-            score: Number(p.score), 
-            box: p.box 
-          }));
+      if (analysis.yolos_result) {
+        const preds = resultToDetections(analysis.yolos_result);
         setItemDetections(itemId, preds);
       }
       
-      // Process edge response - this is the single source of truth
-      const updatePayload = processEdgeResponse(yolos);
+      // Analysis result is ready to persist
+      const updatePayload = {
+        ...analysis,
+        subcategory: null, // Always null after upload - user sets later
+      };
       console.info('[YOLOS] persist', updatePayload);
 
       const { error: updateErr } = await supabase

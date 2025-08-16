@@ -1,7 +1,6 @@
 // supabase/functions/sila-model-debugger/index.ts
-
-// Always return 200 from the edge so the client never sees a non-2xx.
-// The body carries {status:'success'|'fail', ...}
+// Minimal, reliable: classify & (when possible) return a normalized bbox + trimmed detections.
+// No color/proposedTitle here — those are computed client-side to avoid bad defaults.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,172 +8,173 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type HFBox = { xmin:number; ymin:number; xmax:number; ymax:number };
-type HFDet = { score:number; label:string; box?:HFBox };
+type HFBox = { xmin: number; ymin: number; xmax: number; ymax: number };
+type HFPred = { score: number; label: string; box: HFBox };
+type HFPayload = { inputs: string; parameters?: { threshold?: number } };
 
-type RequestBody = {
-  imageUrl?: string;       // required
-  threshold?: number;      // optional
+type ReqBody = {
+  imageUrl?: string;  // public URL of the image
+  base64Image?: string;
+  threshold?: number; // optional first-pass threshold (default 0.12)
 };
 
 const HF_ENDPOINT_URL = Deno.env.get("HF_ENDPOINT_URL") ?? "";
 const HF_TOKEN        = Deno.env.get("HF_TOKEN") ?? "";
 
-// --- helpers ---------------------------------------------------------------
-
-function ok<T>(data: T, init: ResponseInit = {}) {
-  return new Response(JSON.stringify(data), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-    ...init,
-  });
+function isBox(b?: any): b is HFBox {
+  return b && Number.isFinite(b.xmin) && Number.isFinite(b.ymin) && Number.isFinite(b.xmax) && Number.isFinite(b.ymax);
 }
 
-async function fetchAsDataURL(url: string): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`fetch image failed: ${res.status} ${res.statusText}`);
-  const mime = res.headers.get("content-type")?.split(";")[0] ?? "image/png";
-  const buf  = new Uint8Array(await res.arrayBuffer());
-  let bin = "";
-  for (let i = 0; i < buf.byteLength; i++) bin += String.fromCharCode(buf[i]);
-  return `data:${mime};base64,${btoa(bin)}`;
-}
-
+// Labels coming from Fashionpedia
 const PART_LABELS = new Set([
   "hood","collar","lapel","epaulette","sleeve","pocket","neckline","buckle","zipper",
   "applique","bead","bow","flower","fringe","ribbon","rivet","ruffle","sequin","tassel"
 ]);
 
-function toLower(s?: string) { return (s ?? "").toLowerCase(); }
+function mapLabelToCategory(label: string): string | null {
+  const L = label.toLowerCase();
 
-function mapLabelToCategory(label?: string): string | null {
-  const L = toLower(label);
-  if (!L || PART_LABELS.has(L)) return null;
+  if (PART_LABELS.has(L)) return null;
+
   if (L.includes("dress") || L.includes("jumpsuit")) return "Dress";
   if (L.includes("skirt") || L.includes("pants") || L.includes("shorts")) return "Bottoms";
+
   if (
     L.includes("shirt, blouse") || L.includes("top, t-shirt, sweatshirt") ||
     L.includes("sweater") || L.includes("cardigan") || L.includes("vest")
   ) return "Tops";
+
   if (L.includes("jacket") || L.includes("coat") || L.includes("cape")) return "Outerwear";
   if (L.includes("shoe")) return "Shoes";
   if (L.includes("bag, wallet")) return "Bags";
+
   if (
     L.includes("belt") || L.includes("glove") || L.includes("scarf") || L.includes("umbrella") ||
     L.includes("glasses") || L.includes("hat") || L.includes("tie") ||
     L.includes("leg warmer") || L.includes("tights, stockings") || L.includes("sock")
   ) return "Accessory";
+
   return "Clothing";
 }
 
-function area(b?: HFBox) {
-  if (!b) return 0;
-  return Math.max(0, b.xmax - b.xmin) * Math.max(0, b.ymax - b.ymin);
+function normalizeBoxToArray(b: HFBox): [number, number, number, number] {
+  // Many HF models return pixel coords relative to original size OR already-normalized.
+  // YOLOS-fashionpedia returns normalized [0..1]. We clamp just in case.
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  return [clamp(b.xmin), clamp(b.ymin), clamp(b.xmax), clamp(b.ymax)];
 }
 
-function choosePrimaryDet(dets: HFDet[], threshold: number): HFDet | null {
-  const garmentOnly = dets.filter(d => (d.score ?? 0) >= threshold && !PART_LABELS.has(toLower(d.label) ?? ""));
-  if (garmentOnly.length === 0) return null;
-  garmentOnly.sort((a, b) => {
-    const s = (b.score - a.score);
-    if (s !== 0) return s;
-    return area(b.box) - area(a.box);
+function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
+  const garmentPreds = preds.filter(p => p && p.score >= minScore && isBox(p.box) && mapLabelToCategory(p.label) !== null);
+  if (!garmentPreds.length) return null;
+  garmentPreds.sort((a, b) => b.score - a.score);
+  return garmentPreds[0];
+}
+
+function deriveCategoryByVote(preds: HFPred[]): string {
+  const votes = new Map<string, number>();
+  for (const p of preds) {
+    const c = mapLabelToCategory(p.label);
+    if (!c) continue;
+    votes.set(c, (votes.get(c) ?? 0) + p.score);
+  }
+  if (!votes.size) return "Clothing";
+  return [...votes.entries()].sort((a,b) => b[1] - a[1])[0][0];
+}
+
+async function urlToDataUrl(url: string): Promise<string> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`fetch image failed: ${r.status} ${r.statusText}`);
+  const mime = r.headers.get("content-type")?.split(";")[0] ?? "image/png";
+  const buf  = new Uint8Array(await r.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < buf.byteLength; i++) binary += String.fromCharCode(buf[i]);
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
+async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
+  const body: HFPayload = { inputs: dataUrl, parameters: { threshold } };
+  const hfRes = await fetch(HF_ENDPOINT_URL, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
   });
-  return garmentOnly[0] ?? null;
-}
 
-// --- handler ---------------------------------------------------------------
+  if (!hfRes.ok) {
+    throw new Error(`HF error ${hfRes.status}: ${await hfRes.text().catch(() => "<no body>")}`);
+  }
+  // Expected: array of { score, label, box: {xmin,ymin,xmax,ymax} }
+  return await hfRes.json();
+}
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return ok("ok");
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  const t0 = performance.now();
   try {
     if (req.method !== "POST") {
-      return ok({ status: "fail", error: "Method not allowed" });
-    }
-
-    const body = (await req.json()) as RequestBody;
-    if (!HF_ENDPOINT_URL || !HF_TOKEN) {
-      return ok({
-        status: "fail",
-        stop: "config",
-        error: "Missing HF_ENDPOINT_URL or HF_TOKEN",
+      return new Response(JSON.stringify({ status: "fail", error: "Method not allowed" }), {
+        status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
     }
-    if (!body?.imageUrl) {
-      return ok({ status: "fail", stop: "input", error: "imageUrl is required" });
-    }
 
-    const t0 = performance.now();
-
-    // Convert the public URL to a data URL for HF
+    const body = (await req.json()) as ReqBody;
     let dataUrl: string;
-    try {
-      dataUrl = await fetchAsDataURL(body.imageUrl);
-    } catch (e) {
-      return ok({ status: "fail", stop: "fetch_image", error: String(e) });
+    if (body.imageUrl) {
+      dataUrl = await urlToDataUrl(body.imageUrl);
+    } else if (body.base64Image?.startsWith("data:")) {
+      dataUrl = body.base64Image;
+    } else {
+      return new Response(JSON.stringify({ status: "fail", error: "No imageUrl or base64Image provided" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
     }
 
-    const threshold = typeof body.threshold === "number" ? body.threshold : 0.12;
+    const t = typeof body.threshold === "number" ? body.threshold : 0.12;
 
-    // Call Hugging Face
-    const hfRes = await fetch(HF_ENDPOINT_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${HF_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: dataUrl,
-        parameters: { threshold },
-      }),
-    });
+    // First pass @t; if no garment, second pass @0.06
+    let preds = await callHF(dataUrl, t);
+    let primary = pickPrimaryGarment(preds, t);
+    if (!primary) {
+      const t2 = Math.min(0.06, t);
+      const preds2 = await callHF(dataUrl, t2);
+      // If the model returns the same objects, merge and pick again.
+      if (preds2?.length) preds = preds2;
+      primary = pickPrimaryGarment(preds, t2);
+    }
+
+    const category = primary ? (mapLabelToCategory(primary.label) ?? "Clothing") : deriveCategoryByVote(preds);
+
+    const bbox = primary && isBox(primary.box) ? normalizeBoxToArray(primary.box) : null;
+
+    // Trim detections for debug overlay (avoid huge payloads)
+    const trimmed = [...preds]
+      .sort((a,b) => b.score - a.score)
+      .slice(0, 8)
+      .map(p => ({
+        score: Math.round(p.score * 1000) / 1000,
+        label: p.label,
+        box: isBox(p.box) ? normalizeBoxToArray(p.box) : null
+      }));
 
     const latencyMs = Math.round(performance.now() - t0);
-
-    let result: HFDet[] = [];
-    if (!hfRes.ok) {
-      const errText = await hfRes.text().catch(() => "<no body>");
-      return ok({
-        status: "fail",
-        stop: "hf_error",
-        latencyMs,
-        error: errText,
-      });
-    }
-
-    try {
-      result = (await hfRes.json()) as HFDet[];
-    } catch (e) {
-      return ok({ status: "fail", stop: "parse", latencyMs, error: String(e) });
-    }
-
-    // Pick top few labels for debugging
-    const yolosTopLabels = [...result]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3)
-      .map(d => d.label);
-
-    // Choose a primary detection & category (garment labels only)
-    const primary = choosePrimaryDet(result, threshold);
-    const category = mapLabelToCategory(primary?.label) ?? "Clothing";
-    const bbox = primary?.box ?? null;
-
-    return ok({
+    return new Response(JSON.stringify({
       status: "success",
       model: "valentinafeve/yolos-fashionpedia",
       latencyMs,
-      result,                // raw detections
-      yolosTopLabels,        // top-3 labels for UI debugging
-      category,              // coarse category
-      bbox,                  // absolute pixels as given by the model
-      colorName: null,       // color is now computed on the client
-      colorHex:  null,
-      // Let the client build {Color} {Category} or use its own title logic
-      proposedTitle: null,
-    });
+      category,
+      bbox,
+      result: trimmed,
+      yolosTopLabels: trimmed.slice(0,3).map(d => d.label)
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {
-    // Never leak a 500 — return a 200 with status:'fail'
-    return ok({ status: "fail", stop: "exception", error: String(err) });
+    const latencyMs = Math.round(performance.now() - t0);
+    return new Response(JSON.stringify({ status: "fail", stop: "exception", latencyMs, error: String(err) }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
   }
 });

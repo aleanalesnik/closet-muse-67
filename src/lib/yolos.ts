@@ -1,80 +1,97 @@
 // src/lib/yolos.ts
 import { supabase } from "@/lib/supabase";
+import { getDominantColor, snapToPalette } from "@/lib/color";
 
-/** Wait until a Supabase public storage URL is readable */
-export async function waitUntilPublic(url: string) {
-  for (let i = 0; i < 6; i++) {
-    const r = await fetch(url, { method: "HEAD", cache: "no-store" }).catch(() => null);
-    if (r?.ok) return;
-    await new Promise(res => setTimeout(res, 250 * Math.pow(2, i))); // 250ms→8s
-  }
-  throw new Error("Public URL never became readable");
-}
+export type NormBbox = [number, number, number, number];
+export type TrimDet = { score: number; label: string; box: NormBbox | null };
 
-export type BBox = [number, number, number, number]; // [x1,y1,x2,y2] absolute pixels or normalized (client decides)
-export type YolosRawDet = { score:number; label:string; box?:{ xmin:number; ymin:number; xmax:number; ymax:number } };
-
-export type YolosEdgeSuccess = {
+export type EdgeResponse = {
   status: "success";
+  category: string;                 // e.g., "Bottoms"
+  bbox: NormBbox | null;            // normalized or null
+  result: TrimDet[];                // trimmed detections for overlay
+  yolosTopLabels?: string[];
   model: string;
   latencyMs: number;
-  result: YolosRawDet[];
-  yolosTopLabels: string[];
-  category: string;
-  bbox: { xmin:number; ymin:number; xmax:number; ymax:number } | null;
-  colorName: string | null;
-  colorHex: string | null;
-  proposedTitle: string | null;
 };
 
-export type YolosEdgeFail = {
-  status: "fail";
-  stop?: string;
-  error?: string;
-  latencyMs?: number;
-};
+export async function waitUntilPublic(url: string) {
+  for (let i = 0; i < 6; i++) {
+    const r = await fetch(url, { method: 'HEAD', cache: 'no-store' }).catch(() => null);
+    if (r?.ok) return;
+    await new Promise(res => setTimeout(res, 250 * Math.pow(2, i))); // 250ms → 8s
+  }
+  throw new Error('Public URL never became readable');
+}
 
-export type YolosEdgeResponse = YolosEdgeSuccess | YolosEdgeFail;
+export function normalizeBbox(b: any): NormBbox | null {
+  if (!Array.isArray(b) || b.length !== 4) return null;
+  const [x1,y1,x2,y2] = b.map((v:any) => Number(v));
+  if (![x1,y1,x2,y2].every(Number.isFinite)) return null;
+  const clamp = (v:number) => Math.min(1, Math.max(0, v));
+  const nx1 = clamp(Math.min(x1, x2));
+  const ny1 = clamp(Math.min(y1, y2));
+  const nx2 = clamp(Math.max(x1, x2));
+  const ny2 = clamp(Math.max(y1, y2));
+  if (nx2 - nx1 < 0.001 || ny2 - ny1 < 0.001) return null;
+  return [nx1, ny1, nx2, ny2];
+}
 
-export async function detectYolosByUrl(publicUrl: string, threshold = 0.12): Promise<YolosEdgeResponse> {
-  // Critical: do NOT throw on non-2xx, we always want the JSON body.
+function singularizeCategory(k: string): string {
+  const s = k.toLowerCase();
+  if (s === "bottoms") return "bottom";
+  if (s === "tops")    return "top";
+  return k.toLowerCase();
+}
+
+export async function invokeYolos(publicUrl: string): Promise<EdgeResponse> {
   const { data, error } = await supabase.functions.invoke("sila-model-debugger", {
-    body: { imageUrl: publicUrl, threshold },
-    // @ts-ignore - supabase-js accepts this option
-    throwOnError: false,
+    body: { imageUrl: publicUrl, threshold: 0.12 },
   });
-  if (error && !data) {
-    return { status: "fail", stop: "invoke", error: String(error) };
+  if (error) throw error;
+  if (!data || data.status !== "success") {
+    throw new Error("YOLOS failed: " + JSON.stringify(data));
   }
-  return (data as YolosEdgeResponse) ?? { status: "fail", stop: "empty" };
+  // Make sure bbox is normalized array or null
+  data.bbox = normalizeBbox(data.bbox);
+  return data as EdgeResponse;
 }
 
-/** Normalize bbox to [x1,y1,x2,y2] numbers. Returns null if invalid. */
-export function normalizeBBox(b: any): BBox | null {
-  if (!b) return null;
-  if (Array.isArray(b) && b.length === 4) {
-    const [x1,y1,x2,y2] = b.map(Number);
-    if ([x1,y1,x2,y2].some(n => !Number.isFinite(n))) return null;
-    if (x2 <= x1 || y2 <= y1) return null;
-    return [x1,y1,x2,y2];
-  }
-  if (typeof b === "object" && b !== null) {
-    const x1 = Number(b.xmin), y1 = Number(b.ymin), x2 = Number(b.xmax), y2 = Number(b.ymax);
-    if ([x1,y1,x2,y2].some(n => !Number.isFinite(n))) return null;
-    if (x2 <= x1 || y2 <= y1) return null;
-    return [x1,y1,x2,y2];
-  }
-  return null;
-}
+/**
+ * Full analysis step used by your upload flow:
+ * - Call edge (category + optional bbox + trimmed detections)
+ * - Compute dominant color client-side
+ * - Snap to your palette
+ * - Build title "{ColorName} {categorySingular}"
+ */
+export async function analyzeImage(publicUrl: string) {
+  const edge = await invokeYolos(publicUrl);
 
-/** Build a nice default title (only if backend didn't provide one). */
-export function buildTitle(colorName: string | null | undefined, category: string | null | undefined) {
-  const c = (colorName ?? "").trim();
-  const k = (category ?? "").trim();
-  if (c && k) return `${c} ${k.toLowerCase()}`;
-  if (k) return k;
-  if (c) return `${c} item`;
-  return "Clothing item";
+  // Compute color on the client (avoid server "always black" fallbacks)
+  const rgb = await getDominantColor(publicUrl).catch(() => null);
+  const snapped = rgb ? snapToPalette(rgb) : null;
+
+  const category = edge.category;
+  const categorySingular = singularizeCategory(category);
+  const colorName = snapped?.name ?? null;
+  const colorHex  = snapped?.hex ?? null;
+
+  const title = colorName
+    ? `${colorName} ${categorySingular}`
+    : categorySingular ? `${categorySingular}` : "item";
+
+  return {
+    // Persist exactly these:
+    title,
+    category,                       // e.g., "Bottoms"
+    color_name: colorName,          // snapped or null
+    color_hex:  colorHex,           // snapped or null
+    bbox: edge.bbox,                // normalized [x1,y1,x2,y2] or null
+    yolos_result: edge.result,      // trimmed array (for Debug overlay)
+    yolos_top_labels: edge.yolosTopLabels ?? [],
+    yolos_model: edge.model,
+    yolos_latency_ms: edge.latencyMs,
+  };
 }
 
 // -----------------------------------------------------------------------------
