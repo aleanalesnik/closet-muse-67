@@ -42,6 +42,24 @@ type YolosBox = { xmin: number; ymin: number; xmax: number; ymax: number };
 type YolosPred = { label: string; score: number; box: YolosBox };
 type DetectionsMap = Map<string, YolosPred[]>;
 
+// Helper to normalize bbox from edge response
+function normalizeBbox(input: any): number[] | null {
+  if (!input) return null;
+  let arr: any;
+  if (Array.isArray(input)) {
+    arr = input;
+  } else if (typeof input === 'object') {
+    const { xmin, ymin, xmax, ymax } = input;
+    arr = [xmin, ymin, xmax, ymax];
+  } else {
+    return null;
+  }
+  if (arr.length !== 4) return null;
+  const nums = arr.map((v: any) => Number(v));
+  if (nums.some((n) => !Number.isFinite(n))) return null;
+  return nums as [number, number, number, number];
+}
+
 // Helper to process edge function response
 function processEdgeResponse(res: any) {
   const pretty = (s?: string | null) => s ? s.trim() : null;
@@ -52,9 +70,9 @@ function processEdgeResponse(res: any) {
       : 'Item'
   );
 
-  const bboxArray = res.bbox 
-    ? [res.bbox.xmin, res.bbox.ymin, res.bbox.xmax, res.bbox.ymax]
-    : null;
+  const bboxArray = normalizeBbox(res?.result?.[0]?.box) 
+                    ?? normalizeBbox(res?.bbox) 
+                    ?? null;
 
   return {
     title,
