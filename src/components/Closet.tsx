@@ -149,19 +149,31 @@ export default function Closet({ user }: ClosetProps) {
       
       if (upErr) throw upErr;
       
-      // Create DB row
-      const { data: inserted, error: insErr } = await supabase
-        .from('items')
+      // Create DB row with proper auth check
+      const { data: { user: authUser }, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !authUser) {
+        throw new Error("Not authenticated");
+      }
+
+      const { data: itemRow, error: insertErr } = await supabase
+        .from("items")
         .insert({
-          owner: user.id,
-          title: uploadingItem.title,
-          image_path: imagePath
+          owner: authUser.id,
+          title: "Uploading…",
+          image_path: imagePath,
+          category: null,
+          color_name: null,
+          color_hex: null,
         })
-        .select('id')
+        .select()
         .single();
-        
-      if (insErr) throw insErr;
-      const itemId = inserted.id;
+
+      if (insertErr) {
+        console.error("Insert failed", insertErr);
+        throw insertErr;
+      }
+      
+      const itemId = itemRow.id;
       
       // Update status to analyzing
       setUploadingItems(prev => 
