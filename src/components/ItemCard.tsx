@@ -90,7 +90,7 @@ export default function ItemCard({
         <SmartCropImg 
           ref={imgRef}
           src={imageUrl}
-          bbox={Array.isArray(item.bbox) && item.bbox.length === 4 ? [item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3]] : null}
+          bbox={item.bbox as any}
           alt={item.title || 'Closet item'}
           className="aspect-square rounded-xl"
           paddingPct={0.1}

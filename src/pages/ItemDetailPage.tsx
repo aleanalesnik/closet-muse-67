@@ -209,10 +209,7 @@ export default function ItemDetailPage() {
             <SmartCropImg 
               ref={imgRef}
               src={imageUrl}
-              bbox={item?.bbox && Array.isArray(item.bbox) && item.bbox.length === 4 
-                ? [item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3]]
-                : null
-              }
+              bbox={item.bbox as any}
               alt={title || "item"}
               className="aspect-[4/3] rounded-2xl"
               paddingPct={0.1}

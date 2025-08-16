@@ -173,10 +173,7 @@ export default function OutfitBuilder({ user }: OutfitBuilderProps) {
                       <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted">
                         <SmartCropImg
                           src={getImageUrl(item.image_path)}
-                          bbox={item.bbox && Array.isArray(item.bbox) && item.bbox.length === 4 
-                            ? [item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3]]
-                            : null
-                          }
+                          bbox={item.bbox as any}
                           alt={item.title || 'Item'}
                           className="w-full h-full rounded-lg"
                         />
@@ -247,10 +244,7 @@ export default function OutfitBuilder({ user }: OutfitBuilderProps) {
                         <div className="aspect-square relative overflow-hidden rounded-t-lg bg-muted">
                           <SmartCropImg
                             src={getImageUrl(item.image_path)}
-                            bbox={item.bbox && Array.isArray(item.bbox) && item.bbox.length === 4 
-                              ? [item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3]]
-                              : null
-                            }
+                            bbox={item.bbox as any}
                             alt={item.title || 'Item'}
                             className="w-full h-full rounded-t-lg"
                           />
