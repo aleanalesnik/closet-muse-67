@@ -164,7 +164,7 @@ export default function ItemDetailPage() {
           {imageUrl ? (
             <SmartCropImg 
               src={imageUrl}
-              bbox={item?.bbox ? [item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3]] : null}
+              bbox={item?.bbox as [number, number, number, number] | null}
               aspect={4/3}
               pad={0.06}
               label={item?.subcategory || item?.category || ""}

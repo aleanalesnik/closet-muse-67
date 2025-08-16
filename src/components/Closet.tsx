@@ -541,7 +541,7 @@ export default function Closet({ user }: ClosetProps) {
                     )}
                     <SmartCropImg 
                       src={signedUrls[item.image_path] || supabase.storage.from('sila').getPublicUrl(item.image_path).data.publicUrl}
-                      bbox={toBBox(item.bbox) ? [toBBox(item.bbox)!.xmin, toBBox(item.bbox)!.ymin, toBBox(item.bbox)!.xmax, toBBox(item.bbox)!.ymax] : null}
+                      bbox={item.bbox as [number, number, number, number] | null}
                       aspect={1}
                       pad={0.08}
                       label={item.subcategory || item.category || ""}
@@ -599,7 +599,7 @@ export default function Closet({ user }: ClosetProps) {
                     )}
                     <SmartCropImg 
                       src={signedUrls[item.image_path] || supabase.storage.from('sila').getPublicUrl(item.image_path).data.publicUrl}
-                      bbox={toBBox(item.bbox) ? [toBBox(item.bbox)!.xmin, toBBox(item.bbox)!.ymin, toBBox(item.bbox)!.xmax, toBBox(item.bbox)!.ymax] : null}
+                      bbox={item.bbox as [number, number, number, number] | null}
                       aspect={1}
                       pad={0.08}
                       label={item.subcategory || item.category || ""}

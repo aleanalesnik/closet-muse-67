@@ -2,120 +2,47 @@ import React, { useLayoutEffect, useRef, useState } from "react";
 import { isValidItemBox, toBBox, type Det } from "@/lib/aiMapping";
 
 type SmartCropImgProps = {
-  src: string;                 // public URL from Supabase storage
-  bbox?: [number, number, number, number] | null; // [xmin,ymin,xmax,ymax] in px of the original image
-  natural?: { w: number; h: number } | null;      // original dimensions if we have them
-  aspect?: number;             // container aspect ratio (default 1 for cards, 4/3 for details)
-  pad?: number;                // padding around bbox (default 0.08 = 8%)
-  className?: string;          // extra classes for border radius/shadow
-  alt?: string;                // alt text (for accessibility)
-  label?: string;              // detection label for validation
+  src: string;                 
+  bbox?: [number, number, number, number] | null; 
+  aspect?: number;             
+  pad?: number;                
+  className?: string;          
+  alt?: string;                
+  label?: string;              
 };
 
-function computeZoomStyle(
-  bbox: [number, number, number, number], 
-  natural: { w: number; h: number },
-  containerW: number, 
-  containerH: number, 
-  padding: number
-): React.CSSProperties {
-  const [xmin, ymin, xmax, ymax] = bbox;
-  const { w: imageW, h: imageH } = natural;
-  
-  // Add padding around bbox
-  const bboxW = xmax - xmin;
-  const bboxH = ymax - ymin;
-  const paddedXmin = Math.max(0, xmin - bboxW * padding);
-  const paddedYmin = Math.max(0, ymin - bboxH * padding);
-  const paddedXmax = Math.min(imageW, xmax + bboxW * padding);
-  const paddedYmax = Math.min(imageH, ymax + bboxH * padding);
-
-  const paddedW = paddedXmax - paddedXmin;
-  const paddedH = paddedYmax - paddedYmin;
-  const centerX = paddedXmin + paddedW / 2;
-  const centerY = paddedYmin + paddedH / 2;
-
-  // Scale so padded bbox fits container (choose larger scale to ensure bbox fits)
-  const scaleX = containerW / paddedW;
-  const scaleY = containerH / paddedH;
-  const scale = Math.max(scaleX, scaleY);
-
-  // Set background size
-  const scaledImageW = imageW * scale;
-  const scaledImageH = imageH * scale;
-
-  // Position based on bbox center
-  const posX = (centerX / imageW) * 100;
-  const posY = (centerY / imageH) * 100;
-
-  return {
-    width: `${scaledImageW}px`,
-    height: `${scaledImageH}px`,
-    transform: `translate(${containerW / 2 - centerX * scale}px, ${containerH / 2 - centerY * scale}px)`,
-  };
-}
-
 /**
- * SmartCropImg:
- * - Renders a background-image div for precise crop/zoom control
- * - Before YOLOS: shows a centered cover crop (tight, centered)
- * - After YOLOS: auto-zooms to bbox with padding, but only for valid item boxes
- * - Configurable aspect ratio for different contexts
+ * SmartCropImg: Renders images with smart cropping
+ * - Default: centered cover crop
+ * - With valid garment bbox: zoomed to show the detected item
+ * - Ignores part-level detections (sleeves, collars, etc.)
  */
 export default function SmartCropImg({
   src,
   bbox,
-  natural,
   aspect = 1,
   pad = 0.08,
   className = "",
   alt = "",
   label = "",
 }: SmartCropImgProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [imageLoaded, setImageLoaded] = useState(false);
-  const [imageDimensions, setImageDimensions] = useState<{ w: number; h: number } | null>(natural);
-  const [backgroundStyle, setBackgroundStyle] = useState<React.CSSProperties>({
-    backgroundImage: `url(${src})`,
-    backgroundRepeat: 'no-repeat',
-    backgroundColor: '#fff',
-    backgroundPosition: '50% 50%',
-    backgroundSize: 'cover',
-  });
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [style, setStyle] = useState<React.CSSProperties>({});
 
-  // Load natural dimensions if not provided
   useLayoutEffect(() => {
-    if (natural) {
-      setImageDimensions(natural);
-      setImageLoaded(true);
-      return;
-    }
+    const img = imgRef.current;
+    const wrap = wrapRef.current;
+    if (!img || !wrap || !loaded) return;
 
-    const img = new Image();
-    img.onload = () => {
-      setImageDimensions({ w: img.naturalWidth, h: img.naturalHeight });
-      setImageLoaded(true);
-    };
-    img.onerror = () => {
-      setImageLoaded(true); // Still set loaded to show fallback
-    };
-    img.src = src;
-  }, [src, natural]);
-
-  // Compute background position and size
-  useLayoutEffect(() => {
-    if (!imageLoaded || !imageDimensions || !containerRef.current) return;
-
-    const container = containerRef.current;
-    const containerRect = container.getBoundingClientRect();
-    const containerW = containerRect.width || 300;
-    const containerH = containerRect.height || containerW / aspect;
-
-    let backgroundPosition = '50% 50%'; // default center
-    let backgroundSize = 'cover'; // default cover crop
+    const W = img.naturalWidth || 1;
+    const H = img.naturalHeight || 1;
+    const cw = wrap.clientWidth || 1;
+    const ch = wrap.clientHeight || 1;
 
     // Check if we should apply zoom based on bbox validity
-    const bboxObj = bbox ? toBBox(bbox) : null;
+    const bboxObj = bbox ? { xmin: bbox[0], ymin: bbox[1], xmax: bbox[2], ymax: bbox[3] } : null;
     const detForValidation: Det = {
       label: label || "",
       score: 1,
@@ -124,40 +51,63 @@ export default function SmartCropImg({
     
     const shouldZoom = bboxObj && isValidItemBox(detForValidation);
 
-    // If we have a valid bbox for a garment (not a part), compute precise positioning
+    // If we have a valid bbox for a garment (not a part), zoom to it
     if (shouldZoom && bboxObj) {
-      const style = computeZoomStyle(bbox!, imageDimensions, containerW, containerH, pad);
-      setBackgroundStyle({
-        backgroundImage: `url(${src})`,
-        backgroundRepeat: 'no-repeat',
-        backgroundColor: '#fff',
-        backgroundPosition: '0 0', // position via transform in style
-        backgroundSize: `${style.width} ${style.height}`,
-        transform: style.transform,
-      });
-      return;
-    }
+      let [x1, y1, x2, y2] = bbox!;
+      
+      // Add padding around bbox
+      const bw = x2 - x1;
+      const bh = y2 - y1;
+      x1 = Math.max(0, x1 - bw * pad);
+      y1 = Math.max(0, y1 - bh * pad);
+      x2 = Math.min(W, x2 + bw * pad);
+      y2 = Math.min(H, y2 + bh * pad);
 
-    // Default: centered cover crop
-    setBackgroundStyle({
-      backgroundImage: `url(${src})`,
-      backgroundRepeat: 'no-repeat',
-      backgroundColor: '#fff',
-      backgroundPosition,
-      backgroundSize,
-    });
-  }, [src, bbox, aspect, pad, label, imageLoaded, imageDimensions]);
+      const cropW = Math.max(1, x2 - x1);
+      const cropH = Math.max(1, y2 - y1);
+      const cx = x1 + cropW / 2;
+      const cy = y1 + cropH / 2;
+
+      // Scale so padded bbox fits container
+      const s = Math.max(cw / cropW, ch / cropH);
+      const renderedW = W * s;
+      const renderedH = H * s;
+
+      // Translate so bbox center sits at container center
+      const tx = Math.round(cw / 2 - cx * s);
+      const ty = Math.round(ch / 2 - cy * s);
+
+      setStyle({
+        width: `${renderedW}px`,
+        height: `${renderedH}px`,
+        transform: `translate(${tx}px, ${ty}px)`,
+      });
+    } else {
+      // Fallback: centered "cover" crop
+      const s = Math.max(cw / W, ch / H);
+      setStyle({
+        width: `${W * s}px`,
+        height: `${H * s}px`,
+        transform: `translate(${(cw - W * s) / 2}px, ${(ch - H * s) / 2}px)`,
+      });
+    }
+  }, [bbox, loaded, pad, label]);
 
   return (
-    <div 
-      ref={containerRef}
-      className={`smartcrop ${className}`}
-      style={{ 
-        aspectRatio: aspect.toString(),
-        ...backgroundStyle 
-      }}
-      role="img"
-      aria-label={alt}
-    />
+    <div
+      ref={wrapRef}
+      className={`relative overflow-hidden bg-white ${className}`}
+      style={{ aspectRatio: aspect.toString() }}
+    >
+      <img
+        ref={imgRef}
+        src={src}
+        alt={alt}
+        onLoad={() => setLoaded(true)}
+        className="absolute top-0 left-0 will-change-transform"
+        style={style}
+        draggable={false}
+      />
+    </div>
   );
 }
