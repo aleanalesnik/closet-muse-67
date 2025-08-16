@@ -57,11 +57,26 @@ function mapLabelToCategory(label: string): string | null {
   return "Clothing";
 }
 
-function normalizeBoxToArray(b: HFBox): [number, number, number, number] {
-  // Many HF models return pixel coords relative to original size OR already-normalized.
-  // YOLOS-fashionpedia returns normalized [0..1]. We clamp just in case.
-  const clamp = (v: number) => Math.min(1, Math.max(0, v));
-  return [clamp(b.xmin), clamp(b.ymin), clamp(b.xmax), clamp(b.ymax)];
+function toNormBox(b: any): [number,number,number,number] | null {
+  // Accept array or object; return normalized [x1,y1,x2,y2] or null.
+  if (!b) return null;
+  const arr = Array.isArray(b) ? b : [b.xmin, b.ymin, b.xmax, b.ymax];
+  if (!arr || arr.length !== 4) return null;
+  let [x1, y1, x2, y2] = arr.map(Number);
+  if (![x1,y1,x2,y2].every(Number.isFinite)) return null;
+
+  // guard: some models produce [1,1,1,1] when they mean "no box"
+  if (x1 === 1 && y1 === 1 && x2 === 1 && y2 === 1) return null;
+
+  const clamp = (v:number) => Math.min(1, Math.max(0, v));
+  x1 = clamp(Math.min(x1, x2));
+  y1 = clamp(Math.min(y1, y2));
+  x2 = clamp(Math.max(x1, x2));
+  y2 = clamp(Math.max(y1, y2));
+
+  const w = x2 - x1, h = y2 - y1;
+  if (w <= 0.01 || h <= 0.01) return null; // ignore tiny/degenerate boxes
+  return [x1, y1, x2, y2];
 }
 
 function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
@@ -148,7 +163,7 @@ Deno.serve(async (req) => {
 
     const category = primary ? (mapLabelToCategory(primary.label) ?? "Clothing") : deriveCategoryByVote(preds);
 
-    const bbox = primary && isBox(primary.box) ? normalizeBoxToArray(primary.box) : null;
+    const bbox = primary && isBox(primary.box) ? toNormBox(primary.box) : null;
 
     // Trim detections for debug overlay (avoid huge payloads)
     const trimmed = [...preds]
@@ -157,8 +172,9 @@ Deno.serve(async (req) => {
       .map(p => ({
         score: Math.round(p.score * 1000) / 1000,
         label: p.label,
-        box: isBox(p.box) ? normalizeBoxToArray(p.box) : null
-      }));
+        box: toNormBox(p.box)
+      }))
+      .filter(p => p.box !== null); // Remove entries with malformed boxes
 
     const latencyMs = Math.round(performance.now() - t0);
     return new Response(JSON.stringify({

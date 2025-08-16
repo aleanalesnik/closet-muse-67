@@ -64,53 +64,26 @@ function asBboxArray(b: any): number[] | null {
 function resultToDetections(result: any[]): YolosPred[] {
   if (!Array.isArray(result)) return [];
   
-  console.log('[DEBUG] Converting detections result:', result);
-  console.log('[DEBUG] YOLOS API returned', result.length, 'detections');
-  
   return result
     .filter((p: any) => p?.box && typeof p?.score === 'number' && p?.label)
-    .sort((a: any, b: any) => b.score - a.score)
-    .slice(0, 3)
-    .map((p: any, index: number) => {
-      console.log(`[DEBUG] Raw detection ${index}:`, {
-        label: p.label,
-        score: p.score,
-        box: p.box,
-        boxType: Array.isArray(p.box) ? 'array' : typeof p.box
-      });
-
-      // Convert [x1,y1,x2,y2] format to {xmin,ymin,xmax,ymax} format
+    .map((p: any) => {
+      // Edge function returns sanitized boxes as [x1,y1,x2,y2] arrays
+      // Convert to {xmin,ymin,xmax,ymax} format for DetectionsOverlay
       let box;
       if (Array.isArray(p.box) && p.box.length === 4) {
         const [x1, y1, x2, y2] = p.box;
         box = { xmin: x1, ymin: y1, xmax: x2, ymax: y2 };
-        console.log(`[DEBUG] Array box ${index}: [${x1}, ${y1}, ${x2}, ${y2}] -> {xmin: ${x1}, ymin: ${y1}, xmax: ${x2}, ymax: ${y2}}`);
-      } else if (p.box && typeof p.box === 'object') {
-        // Already in correct format
-        box = p.box;
-        console.log(`[DEBUG] Object box ${index}:`, box);
       } else {
-        console.log(`[DEBUG] Invalid box ${index}:`, p.box);
-        return null; // Invalid box
-      }
-
-      // TEMPORARILY DISABLED: Skip validation to see malformed boxes
-      // TODO: Fix YOLOS API to return proper coordinates instead of [1,1,1,1]
-      const isAllOnes = box.xmin === 1 && box.ymin === 1 && box.xmax === 1 && box.ymax === 1;
-      if (isAllOnes) {
-        console.warn(`[DEBUG] YOLOS API returned malformed box [1,1,1,1] for ${p.label} - this should be fixed!`);
+        // Already in object format (shouldn't happen with new edge function)
+        box = p.box;
       }
       
-      const result = { 
+      return {
         label: String(p.label), 
         score: Number(p.score), 
-        box 
+        box
       };
-      
-      console.log(`[DEBUG] Final detection ${index}:`, result);
-      return result;
-    })
-    .filter(Boolean); // Remove null entries
+    });
 }
 
 export default function Closet({ user }: ClosetProps) {
