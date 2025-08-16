@@ -64,15 +64,32 @@ function asBboxArray(b: any): number[] | null {
 function resultToDetections(result: any[]): YolosPred[] {
   if (!Array.isArray(result)) return [];
   
+  console.log('[DEBUG] Converting detections result:', result);
+  
   return result
     .filter((p: any) => p?.box && typeof p?.score === 'number' && p?.label)
     .sort((a: any, b: any) => b.score - a.score)
     .slice(0, 3)
-    .map((p: any) => ({ 
-      label: String(p.label), 
-      score: Number(p.score), 
-      box: p.box 
-    }));
+    .map((p: any) => {
+      // Convert [x1,y1,x2,y2] format to {xmin,ymin,xmax,ymax} format
+      let box;
+      if (Array.isArray(p.box) && p.box.length === 4) {
+        const [x1, y1, x2, y2] = p.box;
+        box = { xmin: x1, ymin: y1, xmax: x2, ymax: y2 };
+      } else if (p.box && typeof p.box === 'object') {
+        // Already in correct format
+        box = p.box;
+      } else {
+        return null; // Invalid box
+      }
+      
+      return { 
+        label: String(p.label), 
+        score: Number(p.score), 
+        box 
+      };
+    })
+    .filter(Boolean); // Remove null entries
 }
 
 export default function Closet({ user }: ClosetProps) {
@@ -228,8 +245,12 @@ export default function Closet({ user }: ClosetProps) {
       
       // Store detections in memory for overlay
       if (analysis.yolos_result) {
+        console.log('[DEBUG] Raw yolos_result:', analysis.yolos_result);
         const preds = resultToDetections(analysis.yolos_result);
+        console.log('[DEBUG] Converted detections:', preds);
         setItemDetections(itemId, preds);
+      } else {
+        console.log('[DEBUG] No yolos_result in analysis');
       }
       
       // Analysis result is ready to persist
