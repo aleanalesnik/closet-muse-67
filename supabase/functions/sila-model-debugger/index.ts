@@ -1,5 +1,4 @@
 // deno-lint-ignore-file no-explicit-any
-import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { encodeBase64 } from 'https://deno.land/std@0.224.0/encoding/base64.ts';
 
 const HF_ENDPOINT_URL = Deno.env.get('HF_ENDPOINT_URL')!;
@@ -11,9 +10,27 @@ type DetectReq = {
   threshold?: number;
 };
 
-serve(async (req) => {
+// ---- CORS (robust) ----
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': origin ?? '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Max-Age': '86400',
+});
+
+Deno.serve(async (req) => {
+  const origin = req.headers.get('origin');
+  const baseHeaders = corsHeaders(origin);
+
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: baseHeaders });
+  }
+
   if (req.method !== 'POST') {
-    return new Response('Method Not Allowed', { status: 405 });
+    return new Response(JSON.stringify({ ok: false, error: 'Method Not Allowed' }), { 
+      status: 200,
+      headers: { ...baseHeaders, 'Content-Type': 'application/json' }
+    });
   }
 
   const start = performance.now();
@@ -52,24 +69,31 @@ serve(async (req) => {
     const latencyMs = Math.round(performance.now() - start);
     if (!hf.ok) {
       const errTxt = await hf.text().catch(() => '');
-      return Response.json(
-        { status: 'fail', latencyMs, error: errTxt || hf.statusText, stop: 'hf_error' },
-        { status: 502 },
-      );
+      return new Response(JSON.stringify(
+        { status: 'fail', latencyMs, error: errTxt || hf.statusText, stop: 'hf_error' }
+      ), {
+        status: 200,
+        headers: { ...baseHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const result = await hf.json();
-    return Response.json({
+    return new Response(JSON.stringify({
       status: 'success',
       model: 'valentinafeve/yolos-fashionpedia',
       latencyMs,
       result,
+    }), {
+      status: 200,
+      headers: { ...baseHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e) {
     const latencyMs = Math.round(performance.now() - start);
-    return Response.json(
-      { status: 'fail', latencyMs, error: String(e?.message ?? e), stop: 'exception' },
-      { status: 500 },
-    );
+    return new Response(JSON.stringify(
+      { status: 'fail', latencyMs, error: String(e?.message ?? e), stop: 'exception' }
+    ), {
+      status: 200,
+      headers: { ...baseHeaders, 'Content-Type': 'application/json' },
+    });
   }
 });
