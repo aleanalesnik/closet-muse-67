@@ -100,11 +100,8 @@ export type Database = {
           color_hex: string | null
           color_name: string | null
           created_at: string | null
-          crop_path: string | null
           id: string
           image_path: string
-          mask_path: string | null
-          notes: string | null
           owner: string
           subcategory: string | null
           title: string | null
@@ -122,12 +119,9 @@ export type Database = {
           color_hex?: string | null
           color_name?: string | null
           created_at?: string | null
-          crop_path?: string | null
           id?: string
           image_path: string
-          mask_path?: string | null
-          notes?: string | null
-          owner: string
+          owner?: string
           subcategory?: string | null
           title?: string | null
           updated_at?: string | null
@@ -144,11 +138,8 @@ export type Database = {
           color_hex?: string | null
           color_name?: string | null
           created_at?: string | null
-          crop_path?: string | null
           id?: string
           image_path?: string
-          mask_path?: string | null
-          notes?: string | null
           owner?: string
           subcategory?: string | null
           title?: string | null
