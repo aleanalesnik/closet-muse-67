@@ -132,6 +132,8 @@ export default function ItemCard({
             naturalHeight={dimensions.naturalHeight}
             renderedWidth={dimensions.renderedWidth}
             renderedHeight={dimensions.renderedHeight}
+            itemBbox={item.bbox}
+            paddingPct={0.1}
           />
         )}
         

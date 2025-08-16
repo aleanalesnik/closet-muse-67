@@ -9,6 +9,8 @@ type Props = {
   naturalHeight: number;  // from <img>.naturalHeight
   renderedWidth: number;  // from container/image clientWidth
   renderedHeight: number; // from container/image clientHeight
+  itemBbox?: number[] | null; // The smart crop bbox that SmartCropImg is using
+  paddingPct?: number; // The padding SmartCropImg is using
 };
 
 export default function DetectionsOverlay({
@@ -17,8 +19,10 @@ export default function DetectionsOverlay({
   naturalHeight, 
   renderedWidth, 
   renderedHeight,
+  itemBbox,
+  paddingPct = 0.1,
 }: Props) {
-  console.log('[DEBUG DetectionsOverlay] preds:', preds, 'dimensions:', {naturalWidth, naturalHeight, renderedWidth, renderedHeight});
+  console.log('[DEBUG DetectionsOverlay] itemBbox:', itemBbox, 'paddingPct:', paddingPct);
   
   if (!preds || preds.length === 0 || !naturalWidth || !naturalHeight || !renderedWidth || !renderedHeight) {
     console.log('[DEBUG DetectionsOverlay] Not rendering - missing data');
@@ -28,41 +32,55 @@ export default function DetectionsOverlay({
   console.log('[DEBUG DetectionsOverlay] First pred box:', preds[0]?.box);
   
   
-  // The DetectionsOverlay needs to apply the SAME transforms as SmartCropImg
-  // to ensure boxes appear exactly where the image content is displayed
+  // Apply THE EXACT SAME transforms as SmartCropImg
+  const iw = naturalWidth;
+  const ih = naturalHeight; 
+  const cw = renderedWidth;
+  const ch = renderedHeight;
   
+  let imageScale, imageOffsetX, imageOffsetY;
+  
+  if (!itemBbox) {
+    // No smart cropping - use simple object-fit: contain
+    imageScale = Math.min(cw / iw, ch / ih);
+    imageOffsetX = (cw - iw * imageScale) / 2;
+    imageOffsetY = (ch - ih * imageScale) / 2;
+  } else {
+    // Smart cropping is active - replicate SmartCropImg's exact logic
+    const [x, y, w, h] = itemBbox; // normalized [0..1]
+    const ow = w * iw;
+    const oh = h * ih;
+    
+    const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
+    imageScale = Math.min(cw / (ow * pad), ch / (oh * pad));
+    
+    // Calculate the offset to center the bbox within the container (same as SmartCropImg)
+    imageOffsetX = cw / 2 - (x + w/2) * iw * imageScale;
+    imageOffsetY = ch / 2 - (y + h/2) * ih * imageScale;
+  }
+  
+  console.log('[DEBUG DetectionsOverlay] Transform:', {
+    imageScale, imageOffsetX, imageOffsetY, 
+    smartCrop: !!itemBbox
+  });
+
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
       {preds.map((p, i) => {
-        // Apply the same coordinate transformation as the displayed image
-        // Since detections are in normalized image coordinates [0,1],
-        // we need to map them to the actual pixels where the image content appears
-        
-        // Simple mapping: normalized coords * displayed image dimensions + offsets
-        const w = (p.box.xmax - p.box.xmin) * naturalWidth;
-        const h = (p.box.ymax - p.box.ymin) * naturalHeight;
-        const x = p.box.xmin * naturalWidth;
-        const y = p.box.ymin * naturalHeight;
-        
-        // Now scale to fit the rendered size (same as img element scaling)
-        const scale = Math.min(renderedWidth / naturalWidth, renderedHeight / naturalHeight);
-        const scaledW = w * scale;
-        const scaledH = h * scale;
-        const scaledX = x * scale;
-        const scaledY = y * scale;
-        
-        // Center the scaled coordinates in the container
-        const finalX = scaledX + (renderedWidth - naturalWidth * scale) / 2;
-        const finalY = scaledY + (renderedHeight - naturalHeight * scale) / 2;
+        // Apply the EXACT SAME coordinate transformation as SmartCropImg
+        const w = (p.box.xmax - p.box.xmin) * iw * imageScale;
+        const h = (p.box.ymax - p.box.ymin) * ih * imageScale;
+        const x = p.box.xmin * iw * imageScale + imageOffsetX;
+        const y = p.box.ymin * ih * imageScale + imageOffsetY;
         const pct = Math.round(p.score * 100);
 
-        console.log(`[DEBUG DetectionsOverlay] Box ${i}: normalized=(${p.box.xmin.toFixed(3)},${p.box.ymin.toFixed(3)},${p.box.xmax.toFixed(3)},${p.box.ymax.toFixed(3)}), final=(${finalX.toFixed(1)},${finalY.toFixed(1)},${scaledW.toFixed(1)},${scaledH.toFixed(1)})`);
+        console.log(`[DEBUG DetectionsOverlay] Box ${i}: norm=(${p.box.xmin.toFixed(3)},${p.box.ymin.toFixed(3)}), final=(${x.toFixed(1)},${y.toFixed(1)},${w.toFixed(1)},${h.toFixed(1)})`);
 
         return (
           <div 
             key={i} 
             className="absolute"
-            style={{ left: finalX, top: finalY, width: scaledW, height: scaledH }}
+            style={{ left: x, top: y, width: w, height: h }}
           >
             <div className="absolute inset-0 rounded-md border-2 border-white/90 shadow-[0_0_0_2px_rgba(99,102,241,0.75)]" />
             <div className="absolute -top-7 left-0 px-2 py-0.5 rounded-md 
