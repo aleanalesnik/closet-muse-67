@@ -160,13 +160,14 @@ export default function ItemDetailPage() {
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
-        <div className="rounded-xl overflow-hidden bg-muted aspect-square flex items-center justify-center">
+        <div className="rounded-xl overflow-hidden bg-muted flex items-center justify-center" style={{ aspectRatio: '4/3' }}>
           {imageUrl ? (
             <SmartCropImg 
               src={imageUrl}
               bbox={item.bbox as any}
+              aspect={4/3}
               alt={title || "item"}
-              className="w-full max-w-[460px]"
+              className="w-full max-w-[460px] rounded-2xl"
             />
           ) : (
             <div className="text-sm text-muted-foreground">No image</div>

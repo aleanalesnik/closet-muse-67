@@ -36,7 +36,7 @@ export default function OutfitBuilder({ user }: OutfitBuilderProps) {
     try {
       const { data, error } = await supabase
         .from('items')
-        .select('*')
+        .select('*, bbox')
         .not('category', 'is', null)
         .order('created_at', { ascending: false });
 
@@ -170,11 +170,15 @@ export default function OutfitBuilder({ user }: OutfitBuilderProps) {
                   {selectedItems.map((item) => (
                     <div key={item.id} className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted">
-                        <img
-                          src={getImageUrl(item.image_path)}
-                          alt={item.title || 'Item'}
-                          className="w-full h-full object-cover"
-                          loading="lazy"
+                        <div 
+                          className="smartcrop w-full h-full"
+                          style={{
+                            backgroundImage: `url(${getImageUrl(item.image_path)})`,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center'
+                          }}
+                          role="img"
+                          aria-label={item.title || 'Item'}
                         />
                       </div>
                       <div className="flex-1 min-w-0">
@@ -241,11 +245,15 @@ export default function OutfitBuilder({ user }: OutfitBuilderProps) {
                     >
                       <CardContent className="p-0">
                         <div className="aspect-square relative overflow-hidden rounded-t-lg bg-muted">
-                          <img
-                            src={getImageUrl(item.image_path)}
-                            alt={item.title || 'Item'}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
+                          <div 
+                            className="smartcrop w-full h-full"
+                            style={{
+                              backgroundImage: `url(${getImageUrl(item.image_path)})`,
+                              backgroundSize: 'cover',
+                              backgroundPosition: 'center'
+                            }}
+                            role="img"
+                            aria-label={item.title || 'Item'}
                           />
                           {isSelected && (
                             <div className="absolute top-2 right-2 w-6 h-6 bg-primary rounded-full flex items-center justify-center">

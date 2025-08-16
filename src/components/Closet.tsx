@@ -53,7 +53,7 @@ export default function Closet({ user }: ClosetProps) {
     try {
       const { data, error } = await supabase
         .from('items')
-        .select('*, yolos_top_labels, yolos_result, yolos_latency_ms, yolos_model')
+        .select('*, yolos_top_labels, yolos_result, yolos_latency_ms, yolos_model, bbox')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -125,16 +125,20 @@ export default function Closet({ user }: ClosetProps) {
           // Trigger bounding box drawing after setting result
           setTimeout(() => drawBoundingBoxes(detectJson), 100);
 
-          // 1) Extract bbox for smart cropping
-          const preds = Array.isArray(detectJson.result) ? detectJson.result : [];
-          const best = preds
-            .filter(p => p?.box)
-            .sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0))[0];
+          // 1) Extract bbox from edge function response or fallback to client extraction
+          let bboxArr: [number, number, number, number] | null = detectJson.proposedBbox || null;
+          
+          if (!bboxArr) {
+            // Fallback: extract from result if proposedBbox not available
+            const preds = Array.isArray(detectJson.result) ? detectJson.result : [];
+            const best = preds
+              .filter(p => p?.box)
+              .sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0))[0];
 
-          let bboxArr: [number, number, number, number] | null = null;
-          if (best?.box) {
-            const { xmin, ymin, xmax, ymax } = best.box;
-            bboxArr = [xmin, ymin, xmax, ymax];
+            if (best?.box) {
+              const { xmin, ymin, xmax, ymax } = best.box;
+              bboxArr = [xmin, ymin, xmax, ymax];
+            }
           }
 
           // 2) Detect color from public storage URL
@@ -570,8 +574,10 @@ export default function Closet({ user }: ClosetProps) {
                     <SmartCropImg 
                       src={signedUrls[item.image_path] || supabase.storage.from('sila').getPublicUrl(item.image_path).data.publicUrl}
                       bbox={item.bbox as any}
+                      aspect={1}
+                      pad={0.08}
                       alt={item.title || 'Closet item'}
-                      className="w-full"
+                      className="w-full rounded-xl shadow-sm"
                     />
                     <div className="absolute top-2 right-2 bg-background/80 rounded-full p-1">
                       {selectedItems.has(item.id) ? (
@@ -625,8 +631,10 @@ export default function Closet({ user }: ClosetProps) {
                     <SmartCropImg 
                       src={signedUrls[item.image_path] || supabase.storage.from('sila').getPublicUrl(item.image_path).data.publicUrl}
                       bbox={item.bbox as any}
+                      aspect={1}
+                      pad={0.08}
                       alt={item.title || 'Closet item'}
-                      className="w-full"
+                      className="w-full rounded-xl shadow-sm"
                     />
                       <div className="absolute top-2 right-2">
                         {/* Removed retry processing dropdown since items-process is no longer available */}

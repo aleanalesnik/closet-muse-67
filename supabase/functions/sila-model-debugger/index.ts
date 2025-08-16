@@ -90,6 +90,12 @@ Deno.serve(async (req) => {
     }
     
     const proposedTitle = topLabelFromYolos(result);
+
+    // Extract proposedBbox from top detection
+    const top = Array.isArray(result) && result.length ? result[0] : null;
+    const proposedBbox = top?.box
+      ? [top.box.xmin, top.box.ymin, top.box.xmax, top.box.ymax]
+      : null;
     
     return new Response(JSON.stringify({
       status: 'success',
@@ -97,6 +103,7 @@ Deno.serve(async (req) => {
       latencyMs,
       result,
       proposedTitle,
+      proposedBbox
     }), {
       status: 200,
       headers: { ...baseHeaders, 'Content-Type': 'application/json' },

@@ -1,104 +1,125 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 
-type BBox = [number, number, number, number]; // [xmin, ymin, xmax, ymax]
-
-type Props = {
-  src: string;
-  /** original-image-space bbox (pixels). If absent, we just center-cover */
-  bbox?: BBox | null;
-  /** extra padding around bbox (fraction of bbox size). Default 0.08 (8%) */
-  pad?: number;
-  /** extra classes for the outer wrapper */
-  className?: string;
-  /** alt text */
-  alt?: string;
+type SmartCropImgProps = {
+  src: string;                 // public URL from Supabase storage
+  bbox?: [number, number, number, number] | null; // [xmin,ymin,xmax,ymax] in px of the original image
+  natural?: { w: number; h: number } | null;      // original dimensions if we have them
+  aspect?: number;             // container aspect ratio (default 1 for cards, 4/3 for details)
+  pad?: number;                // padding around bbox (default 0.08 = 8%)
+  className?: string;          // extra classes for border radius/shadow
+  alt?: string;                // alt text (for accessibility)
 };
 
 /**
  * SmartCropImg:
- * - Before YOLOS: shows a centered cover crop (nice immediate look)
- * - After YOLOS: computes a transform so the bbox tightly fills the container with small padding
- * - Always centered, container is overflow-hidden
+ * - Renders a background-image div for precise crop/zoom control
+ * - Before YOLOS: shows a centered cover crop (tight, centered)
+ * - After YOLOS: auto-zooms to bbox with padding
+ * - Configurable aspect ratio for different contexts
  */
 export default function SmartCropImg({
   src,
   bbox,
+  natural,
+  aspect = 1,
   pad = 0.08,
   className = "",
   alt = "",
-}: Props) {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [style, setStyle] = useState<React.CSSProperties>({});
+}: SmartCropImgProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageDimensions, setImageDimensions] = useState<{ w: number; h: number } | null>(natural);
+  const [backgroundStyle, setBackgroundStyle] = useState<React.CSSProperties>({
+    backgroundImage: `url(${src})`,
+    backgroundRepeat: 'no-repeat',
+    backgroundColor: '#fff',
+  });
 
+  // Load natural dimensions if not provided
   useLayoutEffect(() => {
-    const img = imgRef.current;
-    const wrap = wrapRef.current;
-    if (!img || !wrap) return;
+    if (natural) {
+      setImageDimensions(natural);
+      setImageLoaded(true);
+      return;
+    }
 
-    const W = img.naturalWidth || 1;
-    const H = img.naturalHeight || 1;
-    const cw = wrap.clientWidth || 1;
-    const ch = wrap.clientHeight || 1;
+    const img = new Image();
+    img.onload = () => {
+      setImageDimensions({ w: img.naturalWidth, h: img.naturalHeight });
+      setImageLoaded(true);
+    };
+    img.onerror = () => {
+      setImageLoaded(true); // Still set loaded to show fallback
+    };
+    img.src = src;
+  }, [src, natural]);
 
-    // If we have a bbox, zoom so that padded bbox fills the container.
+  // Compute background position and size
+  useLayoutEffect(() => {
+    if (!imageLoaded || !imageDimensions || !containerRef.current) return;
+
+    const container = containerRef.current;
+    const containerRect = container.getBoundingClientRect();
+    const containerW = containerRect.width || 300;
+    const containerH = containerRect.height || containerW / aspect;
+
+    const { w: imageW, h: imageH } = imageDimensions;
+
+    let backgroundPosition = '50% 50%'; // default center
+    let backgroundSize = 'cover'; // default cover crop
+
+    // If we have a bbox, compute precise positioning
     if (bbox && bbox.length === 4) {
       let [x1, y1, x2, y2] = bbox;
-      // pad outward by % of bbox size
-      const bw = x2 - x1;
-      const bh = y2 - y1;
-      x1 = Math.max(0, x1 - bw * pad);
-      y1 = Math.max(0, y1 - bh * pad);
-      x2 = Math.min(W, x2 + bw * pad);
-      y2 = Math.min(H, y2 + bh * pad);
+      
+      // Add padding around bbox
+      const bboxW = x2 - x1;
+      const bboxH = y2 - y1;
+      x1 = Math.max(0, x1 - bboxW * pad);
+      y1 = Math.max(0, y1 - bboxH * pad);
+      x2 = Math.min(imageW, x2 + bboxW * pad);
+      y2 = Math.min(imageH, y2 + bboxH * pad);
 
-      const cropW = Math.max(1, x2 - x1);
-      const cropH = Math.max(1, y2 - y1);
-      const cx = x1 + cropW / 2;
-      const cy = y1 + cropH / 2;
+      const paddedW = x2 - x1;
+      const paddedH = y2 - y1;
+      const centerX = x1 + paddedW / 2;
+      const centerY = y1 + paddedH / 2;
 
-      // scale so padded bbox fits container
-      const s = Math.max(cw / cropW, ch / cropH);
-      const renderedW = W * s;
-      const renderedH = H * s;
+      // Scale so padded bbox fits container (choose larger scale to ensure bbox fits)
+      const scaleX = containerW / paddedW;
+      const scaleY = containerH / paddedH;
+      const scale = Math.max(scaleX, scaleY);
 
-      // translate so bbox center sits at container center
-      const tx = Math.round(cw / 2 - cx * s);
-      const ty = Math.round(ch / 2 - cy * s);
+      // Set background size
+      const scaledImageW = imageW * scale;
+      const scaledImageH = imageH * scale;
+      backgroundSize = `${scaledImageW}px ${scaledImageH}px`;
 
-      setStyle({
-        width: `${renderedW}px`,
-        height: `${renderedH}px`,
-        transform: `translate(${tx}px, ${ty}px)`,
-      });
-    } else {
-      // Fallback: pleasant centered "cover" crop
-      const s = Math.max(cw / W, ch / H);
-      setStyle({
-        width: `${W * s}px`,
-        height: `${H * s}px`,
-        transform: `translate(${(cw - W * s) / 2}px, ${(ch - H * s) / 2}px)`,
-      });
+      // Position based on bbox center
+      const posX = (centerX / imageW) * 100;
+      const posY = (centerY / imageH) * 100;
+      backgroundPosition = `${posX}% ${posY}%`;
     }
-  }, [bbox, loaded]);
+
+    setBackgroundStyle({
+      backgroundImage: `url(${src})`,
+      backgroundRepeat: 'no-repeat',
+      backgroundColor: '#fff',
+      backgroundPosition,
+      backgroundSize,
+    });
+  }, [src, bbox, aspect, pad, imageLoaded, imageDimensions]);
 
   return (
-    <div
-      ref={wrapRef}
-      className={`relative overflow-hidden rounded-xl bg-white ${className}`}
-    >
-      {/* Keep a consistent thumbnail shape everywhere (square by default) */}
-      <div className="pointer-events-none select-none aspect-square" />
-      <img
-        ref={imgRef}
-        src={src}
-        alt={alt}
-        onLoad={() => setLoaded(true)}
-        className="absolute top-0 left-0 will-change-transform"
-        style={style}
-        draggable={false}
-      />
-    </div>
+    <div 
+      ref={containerRef}
+      className={`smartcrop ${className}`}
+      style={{ 
+        aspectRatio: aspect.toString(),
+        ...backgroundStyle 
+      }}
+      role="img"
+      aria-label={alt}
+    />
   );
 }
