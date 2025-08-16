@@ -68,10 +68,12 @@ function processEdgeResponse(res: any) {
     category: pretty(res.category),
     subcategory: null, // Always null after upload - user sets later
     color_name: pretty(res.colorName),
-    color_hex: pretty(res.colorHex), 
-    bbox: res.bbox || null, // Normalized array from edge
-    yolos_latency_ms: res.latencyMs ?? null,
-    yolos_model: res.model ?? null,
+    color_hex: res.colorHex,
+    bbox: Array.isArray(res.bbox) ? res.bbox : null, // Normalized [x, y, w, h] from edge
+    yolos_model: res.model || 'valentinafeve/yolos-fashionpedia',
+    yolos_latency_ms: res.latencyMs || null,
+    yolos_top_labels: res.yolosTopLabels || null,
+    yolos_result: res.result || null
   };
 }
 
@@ -210,8 +212,15 @@ export default function Closet({ user }: ClosetProps) {
       
       await waitUntilPublic(publicUrl);
       
-      console.info('[YOLOS] invoking', { publicUrl, threshold: 0.12 });
-      const yolos = await detectYolosByUrl(publicUrl, 0.12);
+      console.info('[YOLOS] invoking sila-model-debugger', { publicUrl, threshold: 0.12 });
+      const { data: yolos, error: yolosError } = await supabase.functions.invoke('sila-model-debugger', {
+        body: { 
+          imageUrl: publicUrl,
+          threshold: 0.12 
+        }
+      });
+      
+      if (yolosError) throw yolosError;
       console.info('[YOLOS] result', yolos);
       
       // Store detections in memory for overlay

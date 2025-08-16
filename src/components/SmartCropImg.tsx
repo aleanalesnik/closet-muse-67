@@ -1,68 +1,96 @@
-// src/components/SmartCropImg.tsx
-import * as React from "react";
+import React from "react";
 
 type Props = {
   src: string;
-  bbox?: number[] | null; // normalized [x,y,w,h]
-  padding?: number;       // e.g. 0.10 = 10%
+  bbox?: number[] | null; // normalized [x, y, w, h]
+  paddingPct?: number;
   className?: string;
   alt?: string;
 };
 
-// We render a div with background-image for precise control.
-// If bbox missing, we fallback to object-fit: cover.
-export default function SmartCropImg({ src, bbox, padding = 0.10, className = "", alt = "" }: Props) {
+export default function SmartCropImg({ 
+  src, 
+  bbox, 
+  paddingPct = 0.10, 
+  className = "", 
+  alt = "" 
+}: Props) {
   const imgRef = React.useRef<HTMLImageElement>(null);
-  const [style, setStyle] = React.useState<React.CSSProperties>({
-    width: "100%", height: "100%", backgroundImage: `url(${src})`,
-    backgroundRepeat: "no-repeat", backgroundPosition: "center", backgroundSize: "cover",
+  const [style, setStyle] = React.useState<React.CSSProperties>({ 
+    width: "100%", 
+    height: "100%", 
+    objectFit: "contain", 
+    objectPosition: "center" 
   });
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const img = imgRef.current;
     if (!img) return;
-    const onLoad = () => {
-      if (!bbox || bbox.length !== 4) {
-        setStyle({
-          width: "100%", height: "100%",
-          backgroundImage: `url(${src})`,
-          backgroundRepeat: "no-repeat",
-          backgroundPosition: "center",
-          backgroundSize: "cover",
+
+    function apply() {
+      const container = img.parentElement!;
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+
+      const iw = img.naturalWidth || 0;
+      const ih = img.naturalHeight || 0;
+
+      if (!bbox || !Array.isArray(bbox) || bbox.length !== 4 || iw === 0 || ih === 0) {
+        setStyle({ 
+          width: "100%", 
+          height: "100%", 
+          objectFit: "contain", 
+          objectPosition: "center" 
         });
         return;
       }
-      const [x, y, w, h] = bbox;
-      const pad = Math.min(0.2, Math.max(0, padding));
-      const cx = x + w / 2, cy = y + h / 2;
-      const wP = w * (1 + pad), hP = h * (1 + pad);
 
-      // scale so padded box fills container
-      const scale = Math.max(wP, hP);
-      const zoom = 1 / Math.max(0.01, scale);
+      const [x, y, w, h] = bbox; // normalized [0..1]
+      const ow = w * iw;
+      const oh = h * ih;
 
-      const ox = Math.round(cx * 100);
-      const oy = Math.round(cy * 100);
+      const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
+      const scale = Math.min(cw / (ow * pad), ch / (oh * pad));
+
+      // Calculate the offset to center the bbox within the container
+      const offsetX = cw / 2 - (x + w/2) * iw * scale;
+      const offsetY = ch / 2 - (y + h/2) * ih * scale;
 
       setStyle({
-        width: "100%", height: "100%",
-        backgroundImage: `url(${src})`,
-        backgroundRepeat: "no-repeat",
-        backgroundPosition: `${ox}% ${oy}%`,
-        backgroundSize: `${zoom * 100}% auto`,
+        width: iw * scale,
+        height: ih * scale,
+        position: "absolute",
+        top: offsetY,
+        left: offsetX,
+        objectFit: "fill",
+        transformOrigin: "0 0"
       });
-    };
+    }
 
-    img.addEventListener("load", onLoad, { once: true });
-    if (img.complete) onLoad();
-    return () => img.removeEventListener("load", onLoad);
-  }, [src, JSON.stringify(bbox), padding]);
+    if (img.complete) {
+      apply();
+    } else {
+      img.addEventListener('load', apply, { once: true });
+    }
+
+    const resizeObserver = new ResizeObserver(apply);
+    resizeObserver.observe(img.parentElement!);
+    
+    return () => {
+      resizeObserver.disconnect();
+      img.removeEventListener('load', apply);
+    };
+  }, [bbox, paddingPct]);
 
   return (
-    <div className={className} style={{ position: "relative", overflow: "hidden" }}>
-      <div style={style} />
-      {/* hidden loader to get reliable onLoad timing */}
-      <img ref={imgRef} src={src} alt={alt} style={{ display: "none" }} />
+    <div className={`relative overflow-hidden ${className}`}>
+      <img
+        ref={imgRef}
+        src={src}
+        alt={alt}
+        draggable={false}
+        style={style}
+      />
     </div>
   );
 }

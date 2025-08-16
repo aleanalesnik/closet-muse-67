@@ -86,22 +86,13 @@ export default function ItemCard({
         : 'hover:shadow-lg'
     }`} 
     onClick={isSelectionMode ? onToggleSelection : undefined}>
-      <div className="aspect-square relative" ref={containerRef}>
+      <div className="aspect-square relative">
         <SmartCropImg 
-          ref={imgRef}
           src={imageUrl}
           bbox={item.bbox as any}
           alt={item.title || 'Closet item'}
           className="aspect-square rounded-xl"
           paddingPct={0.1}
-          onMetrics={(metrics) => {
-            setDimensions({
-              naturalWidth: metrics.imgW,
-              naturalHeight: metrics.imgH,
-              renderedWidth: metrics.cw,
-              renderedHeight: metrics.ch
-            });
-          }}
         />
         
         {showOverlay && (

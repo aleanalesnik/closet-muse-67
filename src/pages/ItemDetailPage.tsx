@@ -205,22 +205,13 @@ export default function ItemDetailPage() {
       <div className="grid md:grid-cols-2 gap-6">
         <div className="rounded-xl overflow-hidden bg-muted flex items-center justify-center" style={{ aspectRatio: '4/3' }}>
           {imageUrl ? (
-          <div className="relative w-full h-full" ref={containerRef}>
+          <div className="relative w-full h-full">
             <SmartCropImg 
-              ref={imgRef}
               src={imageUrl}
               bbox={item.bbox as any}
               alt={title || "item"}
               className="aspect-[4/3] rounded-2xl"
               paddingPct={0.1}
-              onMetrics={(metrics) => {
-                setDimensions({
-                  naturalWidth: metrics.imgW,
-                  naturalHeight: metrics.imgH,
-                  renderedWidth: metrics.cw,
-                  renderedHeight: metrics.ch
-                });
-              }}
             />
             {debugDetections && (
               <DetectionsOverlay

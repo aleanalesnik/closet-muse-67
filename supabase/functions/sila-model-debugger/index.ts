@@ -82,19 +82,34 @@ Deno.serve(async (req) => {
     
     // Garment filtering and mapping helpers
     const GARMENT_LABELS = new Set([
-      'dress', 'shirt', 'blouse', 't-shirt', 'top', 'sweater', 'cardigan',
+      'dress', 'jumpsuit', 'shirt', 'blouse', 't-shirt', 'top', 'sweater', 'cardigan',
       'jacket', 'coat', 'blazer', 'vest', 'pants', 'jeans', 'trousers', 
       'shorts', 'skirt', 'shoes', 'boots', 'sneakers', 'heels', 'sandals',
-      'bag', 'handbag', 'purse', 'backpack', 'tote', 'clutch', 'belt',
-      'hat', 'cap', 'scarf', 'sunglasses', 'glasses'
+      'bag', 'handbag', 'purse', 'backpack', 'tote', 'clutch', 'wallet',
+      'belt', 'glove', 'scarf', 'umbrella', 'sunglasses', 'glasses', 'hat', 'cap',
+      'tie', 'leg warmer', 'tights', 'stockings', 'sock'
+    ]);
+
+    // Part labels to ignore entirely
+    const PART_LABELS = new Set([
+      'hood', 'collar', 'lapel', 'epaulette', 'sleeve', 'pocket', 'neckline',
+      'buckle', 'zipper', 'applique', 'bead', 'bow', 'flower', 'fringe',
+      'ribbon', 'rivet', 'ruffle', 'sequin', 'tassel'
     ]);
 
     function pickMainGarment(detections: any[]): any | null {
       if (!Array.isArray(detections) || !detections.length) return null;
       
-      // Filter to garment labels only
+      // Filter to garment labels only, exclude parts
       const garments = detections.filter(d => {
         const label = (d?.label || '').toLowerCase();
+        
+        // Skip if it's a part label
+        if (PART_LABELS.has(label) || Array.from(PART_LABELS).some(p => label.includes(p))) {
+          return false;
+        }
+        
+        // Include if it's a garment label
         return GARMENT_LABELS.has(label) || 
                Array.from(GARMENT_LABELS).some(g => label.includes(g));
       });
@@ -115,44 +130,59 @@ Deno.serve(async (req) => {
     function mapToCategory(label: string): string | null {
       const s = label.toLowerCase();
       
-      if (["handbag", "bag", "tote", "purse", "clutch", "backpack"].some(term => s.includes(term))) {
+      // Bags
+      if (["bag", "handbag", "purse", "tote", "clutch", "backpack", "wallet"].some(term => s.includes(term))) {
         return "Bags";
       }
       
-      if (["belt", "sunglasses", "glasses", "hat", "cap", "scarf"].some(term => s.includes(term))) {
-        return "Accessories";
-      }
-      
-      if (["boot", "boots", "sneaker", "shoe", "heel", "sandals", "flat"].some(term => s.includes(term))) {
+      // Shoes  
+      if (["shoe", "boot", "sneaker", "heel", "sandal", "flat"].some(term => s.includes(term))) {
         return "Shoes";
       }
       
-      if (s.includes("dress")) return "Dress";
-      
-      if (["shirt", "t-shirt", "blouse", "tank", "top", "sweater", "hoodie"].some(term => s.includes(term))) {
-        return "Top";
+      // Dress & Jumpsuit
+      if (["dress", "jumpsuit"].some(term => s.includes(term))) {
+        return "Dress";
       }
       
-      if (["jacket", "coat", "blazer"].some(term => s.includes(term))) {
-        return "Outerwear";
-      }
-      
-      if (["jeans", "pants", "trousers", "skirt", "shorts"].some(term => s.includes(term))) {
+      // Bottoms
+      if (["skirt", "pants", "jean", "trouser", "short"].some(term => s.includes(term))) {
         return "Bottoms";
       }
       
-      return "Clothing";
+      // Tops
+      if (["shirt", "blouse", "t-shirt", "top", "sweater", "sweatshirt", "cardigan", "vest"].some(term => s.includes(term))) {
+        return "Tops";
+      }
+      
+      // Outerwear
+      if (["jacket", "coat", "cape"].some(term => s.includes(term))) {
+        return "Outerwear";
+      }
+      
+      // Accessories
+      if (["belt", "glove", "scarf", "umbrella", "glasses", "sunglasses", "hat", "cap", "tie", "leg warmer", "tight", "stocking", "sock"].some(term => s.includes(term))) {
+        return "Accessory";
+      }
+      
+      return "Clothing"; // Final fallback
     }
 
-    function normalizeBboxPixels(box: any, imgWidth: number, imgHeight: number): number[] | null {
+    function normalizeBboxToXYWH(box: any, imgWidth: number, imgHeight: number): number[] | null {
       if (!box || !imgWidth || !imgHeight) return null;
       
+      // Convert from pixel coordinates to normalized [x, y, w, h]
       const xmin = Math.max(0, Math.min(box.xmin / imgWidth, 1));
       const ymin = Math.max(0, Math.min(box.ymin / imgHeight, 1));  
       const xmax = Math.max(0, Math.min(box.xmax / imgWidth, 1));
       const ymax = Math.max(0, Math.min(box.ymax / imgHeight, 1));
       
-      return [xmin, ymin, xmax, ymax];
+      const x = xmin;
+      const y = ymin;
+      const w = xmax - xmin;
+      const h = ymax - ymin;
+      
+      return [x, y, w, h];
     }
 
     const PALETTE = [
@@ -257,7 +287,7 @@ Deno.serve(async (req) => {
     // Get category from main garment
     const category = mainGarment ? mapToCategory(mainGarment.label || '') : null;
     
-    // Get normalized bbox
+    // Get normalized bbox as [x, y, w, h]
     let bbox: number[] | null = null;
     if (mainGarment?.box && body.imageUrl) {
       // For proper normalization, we need actual image dimensions
@@ -277,7 +307,7 @@ Deno.serve(async (req) => {
         console.warn('Could not get image dimensions:', e);
       }
       
-      bbox = normalizeBboxPixels(mainGarment.box, imgWidth, imgHeight);
+      bbox = normalizeBboxToXYWH(mainGarment.box, imgWidth, imgHeight);
     }
     
     // Extract color from image URL
@@ -286,8 +316,15 @@ Deno.serve(async (req) => {
       colorResult = await dominantColor(body.imageUrl);
     }
     
+    // Get top labels for telemetry
+    const yolosTopLabels = detections
+      .sort((a: any, b: any) => (b.score || 0) - (a.score || 0))
+      .slice(0, 3)
+      .map((d: any) => d.label || '')
+      .filter(Boolean);
+    
     const proposedTitle = colorResult.name && category 
-      ? `${colorResult.name} ${category.toLowerCase()}`
+      ? `${colorResult.name} ${category.toLowerCase().replace(/s$/, '')}`  // Remove plural
       : category || "Item";
     
     return new Response(JSON.stringify({
@@ -295,6 +332,7 @@ Deno.serve(async (req) => {
       model: 'valentinafeve/yolos-fashionpedia',
       latencyMs,
       result: detections,
+      yolosTopLabels,
       bbox,
       category,
       colorHex: colorResult.hex,
