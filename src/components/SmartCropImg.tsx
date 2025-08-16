@@ -8,23 +8,24 @@ type Props = {
   alt?: string;
 };
 
-export default function SmartCropImg({ 
+const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({ 
   src, 
   bbox, 
   paddingPct = 0.10, 
   className = "", 
   alt = "" 
-}: Props) {
-  const imgRef = React.useRef<HTMLImageElement>(null);
+}, ref) => {
+  // Create a local ref for internal use
+  const localImgRef = React.useRef<HTMLImageElement>(null);
   const [style, setStyle] = React.useState<React.CSSProperties>({ 
     width: "100%", 
     height: "100%", 
     objectFit: "contain", 
     objectPosition: "center" 
   });
-
+  
   React.useLayoutEffect(() => {
-    const img = imgRef.current;
+    const img = localImgRef.current;
     if (!img) return;
 
     function apply() {
@@ -85,7 +86,14 @@ export default function SmartCropImg({
   return (
     <div className={`relative overflow-hidden ${className}`}>
       <img
-        ref={imgRef}
+        ref={(el) => {
+          localImgRef.current = el;
+          if (typeof ref === 'function') {
+            ref(el);
+          } else if (ref) {
+            ref.current = el;
+          }
+        }}
         src={src}
         alt={alt}
         draggable={false}
@@ -93,4 +101,8 @@ export default function SmartCropImg({
       />
     </div>
   );
-}
+});
+
+SmartCropImg.displayName = 'SmartCropImg';
+
+export default SmartCropImg;
