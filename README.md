@@ -76,9 +76,9 @@ Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-trick
 
 **Active Functions:**
 - `sila-model-debugger` - YOLOS object detection using public image URLs
-- `items-process` - Complete item processing pipeline for closet uploads
 
 **Removed Functions (Jan 2025):**
+- `items-process` - Removed to simplify upload flow; YOLOS detection now handled client-side via sila-model-debugger
 - `inference-probe`, `inspiration-start`, `inspiration-run` - Consolidated into sila-model-debugger with public URL workflow
 
 ## Testing Checklist
@@ -88,21 +88,16 @@ Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-trick
 - [ ] Verify response contains detected items with bounding boxes
 - [ ] **SQL Verification**: No DB changes expected for detection test
 
-### Test 2: Items-process Test  
-- [ ] Upload an item through the API (not UI)
-- [ ] Call `items-process` edge function with itemId and imagePath
-- [ ] Verify processing completes successfully
+### Test 2: Closet Upload Flow
+- [ ] Upload an item through the UI
+- [ ] Verify YOLOS detection runs via sila-model-debugger
+- [ ] Verify client-side persistence of YOLOS data to items table
 - [ ] **SQL Verification**:
 ```sql
--- Check item was processed
-SELECT id, title, category, subcategory, color_hex, color_name, attributes, bbox 
+-- Check item was uploaded and YOLOS data persisted
+SELECT id, title, yolos_top_labels, yolos_result, yolos_latency_ms
 FROM items 
 WHERE id = 'YOUR_ITEM_ID';
-
--- Check embedding was created
-SELECT item_id, embedding IS NOT NULL as has_embedding 
-FROM item_embeddings 
-WHERE item_id = 'YOUR_ITEM_ID';
 ```
 
 ### Test 3: UI Upload Test

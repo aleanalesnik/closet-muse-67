@@ -1,7 +1,4 @@
 project_id = "tqbjbugwwffdfhihpkcg"
 
-[functions.items-process]
-verify_jwt = false
-
 [functions.sila-model-debugger]
 verify_jwt = false

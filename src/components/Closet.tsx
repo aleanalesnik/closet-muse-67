@@ -6,9 +6,8 @@ import { uploadAndProcessItem } from '@/lib/items';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, Loader2, MoreHorizontal } from 'lucide-react';
+import { Upload, Loader2 } from 'lucide-react';
 
 interface Item {
   id: string;
@@ -150,9 +149,8 @@ export default function Closet({ user }: ClosetProps) {
         setYolosAnalyzing(false);
       }
       
-      // Extract FASHION_SEG status for dev badge
-      const fashionSegStatus = fn?.trace?.find((t: any) => t.step === "FASHION_SEG")?.status;
-      const devBadge = import.meta.env.DEV && fashionSegStatus ? ` (YOLOS: ${fashionSegStatus})` : "";
+      // Remove this dev badge since we no longer have trace data
+      const devBadge = "";
       
       // DISABLED: Processing started toast
       /*
@@ -266,43 +264,6 @@ export default function Closet({ user }: ClosetProps) {
     });
   };
 
-  const handleRetryProcessing = async (itemId: string, imagePath: string) => {
-    setProcessing(prev => new Set([...prev, itemId]));
-    
-    try {
-      const { data, error } = await supabase.functions.invoke("items-process", {
-        body: { itemId, imagePath, debug: import.meta.env.DEV }
-      });
-      
-      if (error) {
-        toast({
-          title: "Retry failed",
-          description: (error as any)?.message || "Processing failed",
-          variant: "destructive"
-        });
-      } else {
-        toast({
-          title: data?.ok ? "Processing completed" : "Processing queued",
-          description: data?.ok ? "Item has been processed successfully" : "We'll retry in the background"
-        });
-      }
-      
-      // Refresh items list
-      await loadItems();
-    } catch (err: any) {
-      toast({
-        title: "Retry failed", 
-        description: err?.message || "Unknown error",
-        variant: "destructive"
-      });
-    } finally {
-      setProcessing(prev => {
-        const next = new Set(prev);
-        next.delete(itemId);
-        return next;
-      });
-    }
-  };
 
   // Remove processing state when item has category (processing completed)
   useEffect(() => {
@@ -420,30 +381,8 @@ export default function Closet({ user }: ClosetProps) {
                       alt={item.title || 'Closet item'}
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button 
-                            variant="secondary" 
-                            size="sm" 
-                            className="h-8 w-8 p-0"
-                            onClick={(e) => e.preventDefault()} // Prevent Link navigation
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem 
-                            onClick={(e) => {
-                              e.preventDefault();
-                              handleRetryProcessing(item.id, item.image_path);
-                            }}
-                            disabled={processing.has(item.id)}
-                          >
-                            {processing.has(item.id) ? 'Processing...' : 'Retry processing'}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                    <div className="absolute top-2 right-2">
+                      {/* Removed retry processing dropdown since items-process is no longer available */}
                     </div>
                   </div>
                   <CardContent className="p-4">
