@@ -7,7 +7,7 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instanciate createClient with right options
+  // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "13.0.4"
@@ -91,29 +91,6 @@ export type Database = {
         }
         Relationships: []
       }
-      item_embeddings: {
-        Row: {
-          embedding: string | null
-          item_id: string
-        }
-        Insert: {
-          embedding?: string | null
-          item_id: string
-        }
-        Update: {
-          embedding?: string | null
-          item_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "item_embeddings_item_id_fkey"
-            columns: ["item_id"]
-            isOneToOne: true
-            referencedRelation: "items"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       items: {
         Row: {
           attributes: Json | null
@@ -132,6 +109,10 @@ export type Database = {
           subcategory: string | null
           title: string | null
           updated_at: string | null
+          yolos_latency_ms: number | null
+          yolos_model: string | null
+          yolos_result: Json | null
+          yolos_top_labels: string[] | null
         }
         Insert: {
           attributes?: Json | null
@@ -150,6 +131,10 @@ export type Database = {
           subcategory?: string | null
           title?: string | null
           updated_at?: string | null
+          yolos_latency_ms?: number | null
+          yolos_model?: string | null
+          yolos_result?: Json | null
+          yolos_top_labels?: string[] | null
         }
         Update: {
           attributes?: Json | null
@@ -168,6 +153,10 @@ export type Database = {
           subcategory?: string | null
           title?: string | null
           updated_at?: string | null
+          yolos_latency_ms?: number | null
+          yolos_model?: string | null
+          yolos_result?: Json | null
+          yolos_top_labels?: string[] | null
         }
         Relationships: []
       }
@@ -251,16 +240,16 @@ export type Database = {
         Returns: unknown
       }
       match_user_items: {
-        Args: { p_owner: string; p_query: string; p_limit?: number }
+        Args: { p_limit?: number; p_owner: string; p_query: string }
         Returns: {
-          item_id: string
-          score: number
-          title: string
           category: string
-          subcategory: string
           color_hex: string
           color_name: string
           image_path: string
+          item_id: string
+          score: number
+          subcategory: string
+          title: string
         }[]
       }
       sparsevec_out: {

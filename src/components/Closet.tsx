@@ -420,6 +420,7 @@ export default function Closet({ user }: ClosetProps) {
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
         {allItems.map((item) => {
           const isUploading = 'isUploading' in item && item.isUploading;
+          const uploadStatus = isUploading ? (item as any).status : null;
           const imageUrl = isUploading 
             ? (item as any).preview 
             : signedUrls[item.image_path] || supabase.storage.from('sila').getPublicUrl(item.image_path).data.publicUrl;
@@ -429,14 +430,13 @@ export default function Closet({ user }: ClosetProps) {
               {isUploading ? (
                 <Card className="overflow-hidden">
                   <div className="aspect-square relative">
-                    <SmartCropImg 
-                      src={imageUrl}
-                      bbox={item.bbox || null}
-                      alt={item.title || 'Uploading item'}
-                      className="aspect-square rounded-xl"
-                    />
-                    <div className="absolute bottom-2 left-2 bg-black/80 text-white text-xs px-2 py-1 rounded">
-                      {(item as any).status === 'uploading' ? 'Uploading…' : 'Analyzing with YOLOS (Supabase)…'}
+                    <div className="w-full h-full bg-muted rounded-t-lg flex items-center justify-center">
+                      <div className="text-center">
+                        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mx-auto mb-2" />
+                        <div className="text-xs text-muted-foreground px-2">
+                          {uploadStatus === 'uploading' ? 'Uploading…' : 'Analyzing with YOLOS (Supabase)…'}
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <CardContent className="p-4">
