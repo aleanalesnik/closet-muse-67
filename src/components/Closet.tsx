@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
 import { uploadAndProcessItem } from '@/lib/items';
 import { dominantHexFromImage, snapToPalette, buildTitle, SILA_PALETTE } from '@/lib/palette';
+import SmartCropImg from '@/components/SmartCropImg';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +23,7 @@ interface Item {
   notes?: string;
   created_at: string;
   yolos_top_labels?: string[];
+  bbox?: number[] | null;
 }
 
 interface ClosetProps {
@@ -123,12 +125,24 @@ export default function Closet({ user }: ClosetProps) {
           // Trigger bounding box drawing after setting result
           setTimeout(() => drawBoundingBoxes(detectJson), 100);
 
-          // 1) Detect color from public storage URL
+          // 1) Extract bbox for smart cropping
+          const preds = Array.isArray(detectJson.result) ? detectJson.result : [];
+          const best = preds
+            .filter(p => p?.box)
+            .sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0))[0];
+
+          let bboxArr: [number, number, number, number] | null = null;
+          if (best?.box) {
+            const { xmin, ymin, xmax, ymax } = best.box;
+            bboxArr = [xmin, ymin, xmax, ymax];
+          }
+
+          // 2) Detect color from public storage URL
           try {
             const rawHex = await dominantHexFromImage(imageUrl);
             const snapped = snapToPalette(rawHex, SILA_PALETTE);
 
-            // 2) Choose label for title
+            // 3) Choose label for title
             const results = detectJson.result as Array<{label:string; score:number; box:any}>;
             const top = results.slice(0, 3).map(r => r.label);
             
@@ -153,16 +167,17 @@ export default function Closet({ user }: ClosetProps) {
 
             const label = detectJson?.proposedTitle || mapped?.subcategory || mapped?.category || "clothing";
             
-            // 3) Build final title (no brand)
+            // 4) Build final title (no brand)
             const finalTitle = buildTitle({ label, colorName: snapped.name });
 
-            // 4) Persist to Supabase
+            // 5) Persist to Supabase including bbox
             const updatePayload: any = {
               title: finalTitle,
               color_name: snapped.name,
               color_hex: snapped.hex,
               category: mapped?.category ?? null,
               subcategory: mapped?.subcategory ?? null,
+              bbox: bboxArr, // persist for smart cropping
               yolos_latency_ms: detectJson.latencyMs ?? null,
               yolos_model: detectJson.model ?? 'valentinafeve/yolos-fashionpedia',
               yolos_result: results,
@@ -176,7 +191,7 @@ export default function Closet({ user }: ClosetProps) {
 
             if (!updErr) {
               toast({ title: 'AI tags saved' });
-              console.log('[Persist complete] Title:', finalTitle, 'Color:', snapped);
+              console.log('[Persist complete] Title:', finalTitle, 'Color:', snapped, 'BBox:', bboxArr);
             } else {
               console.error('[Persist] error:', updErr);
               toast({ title: 'Save failed', description: updErr.message, variant: 'destructive' });
@@ -190,6 +205,7 @@ export default function Closet({ user }: ClosetProps) {
             const { error: updErr } = await supabase
               .from('items')
               .update({
+                bbox: bboxArr, // still save bbox for smart cropping
                 yolos_latency_ms: detectJson.latencyMs ?? null,
                 yolos_model: detectJson.model ?? 'valentinafeve/yolos-fashionpedia',
                 yolos_result: results,
@@ -551,10 +567,11 @@ export default function Closet({ user }: ClosetProps) {
                         <Loader2 className="h-8 w-8 animate-spin text-white" />
                       </div>
                     )}
-                    <img 
-                      src={signedUrls[item.image_path] || "/placeholder.svg"} 
+                    <SmartCropImg 
+                      src={signedUrls[item.image_path] || supabase.storage.from('sila').getPublicUrl(item.image_path).data.publicUrl}
+                      bbox={item.bbox as any}
                       alt={item.title || 'Closet item'}
-                      className="w-full h-full object-cover"
+                      className="w-full"
                     />
                     <div className="absolute top-2 right-2 bg-background/80 rounded-full p-1">
                       {selectedItems.has(item.id) ? (
@@ -599,17 +616,18 @@ export default function Closet({ user }: ClosetProps) {
               ) : (
                 <Link to={`/item/${item.id}`} className="block">
                   <Card className="overflow-hidden hover:shadow-lg transition-shadow">
-                    <div className="aspect-square relative">
-                      {processing.has(item.id) && (
-                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10 rounded-t-lg">
-                          <Loader2 className="h-8 w-8 animate-spin text-white" />
-                        </div>
-                      )}
-                      <img 
-                        src={signedUrls[item.image_path] || "/placeholder.svg"} 
-                        alt={item.title || 'Closet item'}
-                        className="w-full h-full object-cover"
-                      />
+                  <div className="aspect-square relative">
+                    {processing.has(item.id) && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-10 rounded-t-lg">
+                        <Loader2 className="h-8 w-8 animate-spin text-white" />
+                      </div>
+                    )}
+                    <SmartCropImg 
+                      src={signedUrls[item.image_path] || supabase.storage.from('sila').getPublicUrl(item.image_path).data.publicUrl}
+                      bbox={item.bbox as any}
+                      alt={item.title || 'Closet item'}
+                      className="w-full"
+                    />
                       <div className="absolute top-2 right-2">
                         {/* Removed retry processing dropdown since items-process is no longer available */}
                       </div>

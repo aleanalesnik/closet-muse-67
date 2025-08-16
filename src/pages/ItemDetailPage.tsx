@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { SILA_PALETTE } from "@/lib/palette";
+import SmartCropImg from "@/components/SmartCropImg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,6 +20,7 @@ type ItemRow = {
   color_name: string | null;
   color_hex: string | null;
   image_path: string;
+  bbox?: number[] | null;
 };
 
 
@@ -159,7 +161,16 @@ export default function ItemDetailPage() {
 
       <div className="grid md:grid-cols-2 gap-6">
         <div className="rounded-xl overflow-hidden bg-muted aspect-square flex items-center justify-center">
-          {imageUrl ? <img src={imageUrl} alt={title || "item"} className="object-contain w-full h-full" /> : <div className="text-sm text-muted-foreground">No image</div>}
+          {imageUrl ? (
+            <SmartCropImg 
+              src={imageUrl}
+              bbox={item.bbox as any}
+              alt={title || "item"}
+              className="w-full max-w-[460px]"
+            />
+          ) : (
+            <div className="text-sm text-muted-foreground">No image</div>
+          )}
         </div>
 
         <div className="space-y-4">
