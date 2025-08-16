@@ -6,7 +6,6 @@ import Auth from '@/components/Auth';
 import Closet from '@/components/Closet';
 import Inspiration from '@/components/Inspiration';
 import OutfitBuilder from '@/components/OutfitBuilder';
-import { YolosDetectBlock } from '@/components/ApiRequestBlock';
 import { Home, Shirt, Search, User, LogOut, Settings } from 'lucide-react';
 
 const Index = () => {
@@ -79,7 +78,7 @@ const Index = () => {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <div className="border-b border-border bg-card sticky top-0 z-10">
             <div className="max-w-7xl mx-auto">
-              <TabsList className="grid w-full grid-cols-4 max-w-2xl mx-auto">
+              <TabsList className="grid w-full grid-cols-3 max-w-xl mx-auto">
                 <TabsTrigger value="closet" className="flex items-center gap-2">
                   <Shirt className="w-4 h-4" />
                   Closet
@@ -91,10 +90,6 @@ const Index = () => {
                 <TabsTrigger value="outfits" className="flex items-center gap-2">
                   <User className="w-4 h-4" />
                   Outfits
-                </TabsTrigger>
-                <TabsTrigger value="api" className="flex items-center gap-2">
-                  <Settings className="w-4 h-4" />
-                  API Test
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -110,12 +105,6 @@ const Index = () => {
 
           <TabsContent value="outfits" className="mt-0">
             <OutfitBuilder user={user} />
-          </TabsContent>
-
-          <TabsContent value="api" className="mt-0">
-            <div className="p-6">
-              <YolosDetectBlock />
-            </div>
           </TabsContent>
         </Tabs>
       </main>
