@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { ChevronLeft } from "lucide-react";
 
 type ItemRow = {
   id: string;
@@ -145,7 +146,17 @@ export default function ItemDetailPage() {
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Item</h1>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => nav("/")}
+            className="hover:bg-muted"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="text-2xl font-semibold">Item</h1>
+        </div>
         <div className="flex gap-2">
           <Button variant="destructive" onClick={() => setConfirmOpen(true)}>Trash</Button>
           <Button onClick={onSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
@@ -165,13 +176,18 @@ export default function ItemDetailPage() {
 
           <div className="space-y-1">
             <label className="text-sm text-muted-foreground">Brand</label>
-            <Input value={brand} onChange={e=>setBrand(e.target.value)} placeholder="Aritzia" />
+            <Input 
+              value={brand} 
+              onChange={e=>setBrand(e.target.value)} 
+              placeholder="Type the brand's name" 
+              className="placeholder:text-muted-foreground/60"
+            />
           </div>
 
           <div className="space-y-1">
             <label className="text-sm text-muted-foreground">Category</label>
             <Select value={category || ""} onValueChange={(v)=>{ setCategory(v || null); setSubcategory(null); }}>
-              <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Select clothing item category" /></SelectTrigger>
               <SelectContent>
                 {CATEGORY_OPTIONS.map(c => <SelectItem key={c} value={c}>{c[0].toUpperCase()+c.slice(1)}</SelectItem>)}
               </SelectContent>
