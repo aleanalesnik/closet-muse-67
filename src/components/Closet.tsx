@@ -248,7 +248,9 @@ export default function Closet({ user }: ClosetProps) {
         console.log('[DEBUG] Raw yolos_result:', analysis.yolos_result);
         const preds = resultToDetections(analysis.yolos_result);
         console.log('[DEBUG] Converted detections:', preds);
+        console.log('[DEBUG] Setting detections for itemId:', itemId);
         setItemDetections(itemId, preds);
+        console.log('[DEBUG] Detections state after setting:', detections);
       } else {
         console.log('[DEBUG] No yolos_result in analysis');
       }
@@ -280,9 +282,28 @@ export default function Closet({ user }: ClosetProps) {
         });
       }
       
-      // Remove from uploading and refresh items
+      // Remove from uploading and add to items directly instead of reloading
       setUploadingItems(prev => prev.filter(item => item.id !== uploadingId));
-      await loadItems();
+      
+      // Add the new item to the items list directly to preserve detections
+      const newItem = {
+        id: itemId,
+        ...updatePayload,
+        image_path: imagePath,
+        created_at: new Date().toISOString()
+      };
+      setItems(prev => [newItem, ...prev]);
+      
+      // Generate signed URL for the new item
+      try {
+        const urls = await batchCreateSignedUrls([imagePath]);
+        setSignedUrls(prev => ({ ...prev, ...urls }));
+      } catch (urlError) {
+        console.warn('Failed to generate signed URL:', urlError);
+      }
+      
+      console.log('[DEBUG] Added new item to state:', newItem);
+      console.log('[DEBUG] Current detections map has:', Array.from(detections.keys()));
       
     } catch (error: any) {
       console.error('[YOLOS] Upload failed:', error);

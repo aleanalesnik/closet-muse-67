@@ -76,6 +76,8 @@ export default function ItemCard({
 
   const isUploading = item.isUploading;
   const showOverlay = (debugDetections || isUploading) && detectionPreds && detectionPreds.length > 0;
+  
+  console.log('[DEBUG ItemCard] Item:', item.id, 'debugDetections:', debugDetections, 'detectionPreds:', detectionPreds, 'showOverlay:', showOverlay);
 
   const cardContent = (
     <Card className={`overflow-hidden transition-all ${

@@ -18,7 +18,10 @@ export default function DetectionsOverlay({
   renderedWidth, 
   renderedHeight,
 }: Props) {
+  console.log('[DEBUG DetectionsOverlay] preds:', preds, 'dimensions:', {naturalWidth, naturalHeight, renderedWidth, renderedHeight});
+  
   if (!preds || preds.length === 0 || !naturalWidth || !naturalHeight || !renderedWidth || !renderedHeight) {
+    console.log('[DEBUG DetectionsOverlay] Not rendering - missing data');
     return null;
   }
 
