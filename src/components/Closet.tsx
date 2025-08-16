@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
 import { uploadAndProcessItem } from '@/lib/items';
+import { dominantHexFromImage, snapToPalette, buildTitle, SILA_PALETTE } from '@/lib/palette';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -122,26 +123,85 @@ export default function Closet({ user }: ClosetProps) {
           // Trigger bounding box drawing after setting result
           setTimeout(() => drawBoundingBoxes(detectJson), 100);
 
-          // Persist to public.items
-          const results = detectJson.result as Array<{label:string; score:number; box:any}>;
-          const top = results.slice(0, 3).map(r => r.label);
+          // 1) Detect color from public storage URL
+          try {
+            const rawHex = await dominantHexFromImage(imageUrl);
+            const snapped = snapToPalette(rawHex, SILA_PALETTE);
 
-          const { error: updErr } = await supabase
-            .from('items')
-            .update({
+            // 2) Choose label for title
+            const results = detectJson.result as Array<{label:string; score:number; box:any}>;
+            const top = results.slice(0, 3).map(r => r.label);
+            
+            // Map first detection to category/subcategory (simplified mapping)
+            const firstLabel = results[0]?.label?.toLowerCase() || '';
+            let mapped = { category: null, subcategory: null };
+            
+            // Simple category mapping based on common YOLO labels
+            if (firstLabel.includes('shirt') || firstLabel.includes('top') || firstLabel.includes('blouse')) {
+              mapped = { category: 'top', subcategory: firstLabel.includes('shirt') ? 't-shirt' : 'shirt' };
+            } else if (firstLabel.includes('jeans') || firstLabel.includes('pants') || firstLabel.includes('trousers')) {
+              mapped = { category: 'bottom', subcategory: firstLabel.includes('jeans') ? 'jeans' : 'pants' };
+            } else if (firstLabel.includes('dress')) {
+              mapped = { category: 'dress', subcategory: 'dress' };
+            } else if (firstLabel.includes('shoe') || firstLabel.includes('boot') || firstLabel.includes('sneaker')) {
+              mapped = { category: 'shoes', subcategory: firstLabel.includes('sneaker') ? 'sneakers' : 'shoes' };
+            } else if (firstLabel.includes('bag') || firstLabel.includes('handbag')) {
+              mapped = { category: 'bag', subcategory: 'handbag' };
+            } else if (firstLabel.includes('jacket') || firstLabel.includes('coat')) {
+              mapped = { category: 'outerwear', subcategory: firstLabel.includes('jacket') ? 'jacket' : 'coat' };
+            }
+
+            const label = detectJson?.proposedTitle || mapped?.subcategory || mapped?.category || "clothing";
+            
+            // 3) Build final title (no brand)
+            const finalTitle = buildTitle({ label, colorName: snapped.name });
+
+            // 4) Persist to Supabase
+            const updatePayload: any = {
+              title: finalTitle,
+              color_name: snapped.name,
+              color_hex: snapped.hex,
+              category: mapped?.category ?? null,
+              subcategory: mapped?.subcategory ?? null,
               yolos_latency_ms: detectJson.latencyMs ?? null,
               yolos_model: detectJson.model ?? 'valentinafeve/yolos-fashionpedia',
-              yolos_result: results,             // jsonb
-              yolos_top_labels: top,             // text[]
-            })
-            .eq('id', itemId);
+              yolos_result: results,
+              yolos_top_labels: top,
+            };
 
-          if (updErr) {
-            console.error('[Persist YOLOS] error:', updErr);
-            toast({ title: 'Saved image, but failed to persist YOLOS.', variant: 'destructive' });
-          } else {
-            console.log('[Persist YOLOS] Update success.');
-            toast({ title: 'YOLOS tags saved.' });
+            const { error: updErr } = await supabase
+              .from('items')
+              .update(updatePayload)
+              .eq('id', itemId);
+
+            if (!updErr) {
+              toast({ title: 'AI tags saved' });
+              console.log('[Persist complete] Title:', finalTitle, 'Color:', snapped);
+            } else {
+              console.error('[Persist] error:', updErr);
+              toast({ title: 'Save failed', description: updErr.message, variant: 'destructive' });
+            }
+          } catch (colorError) {
+            console.error('Color extraction failed:', colorError);
+            // Fall back to basic YOLOS save without color/title
+            const results = detectJson.result as Array<{label:string; score:number; box:any}>;
+            const top = results.slice(0, 3).map(r => r.label);
+
+            const { error: updErr } = await supabase
+              .from('items')
+              .update({
+                yolos_latency_ms: detectJson.latencyMs ?? null,
+                yolos_model: detectJson.model ?? 'valentinafeve/yolos-fashionpedia',
+                yolos_result: results,
+                yolos_top_labels: top,
+              })
+              .eq('id', itemId);
+
+            if (!updErr) {
+              toast({ title: 'YOLOS tags saved (color extraction failed)' });
+            } else {
+              toast({ title: 'Save failed', description: updErr.message, variant: 'destructive' });
+            }
           }
         }
       } catch (yolosError) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { SILA_PALETTE } from "@/lib/palette";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,13 +21,6 @@ type ItemRow = {
   image_path: string;
 };
 
-const COLORS: Array<{name:string;hex:string}> = [
-  {name:"black",hex:"#000000"},{name:"grey",hex:"#808080"},{name:"white",hex:"#ffffff"},{name:"ivory",hex:"#fffff0"},
-  {name:"beige",hex:"#d9c7a0"},{name:"brown",hex:"#8b5a2b"},{name:"metallic",hex:"#c0c0c0"},{name:"gold",hex:"#d4af37"},
-  {name:"purple",hex:"#8a2be2"},{name:"blue",hex:"#1e90ff"},{name:"navy",hex:"#001f54"},{name:"green",hex:"#2e8b57"},
-  {name:"olive",hex:"#556b2f"},{name:"yellow",hex:"#ffd84d"},{name:"orange",hex:"#ff8c00"},{name:"pink",hex:"#ff6fae"},
-  {name:"red",hex:"#c62828"},{name:"maroon",hex:"#800000"},
-];
 
 const CATEGORY_OPTIONS = ["accessory","bag","bottom","dress","outerwear","shoes","top"] as const;
 
@@ -207,14 +201,14 @@ export default function ItemDetailPage() {
           <div className="space-y-2">
             <label className="text-sm text-muted-foreground">Color</label>
             <div className="grid grid-cols-8 gap-2">
-              {COLORS.map(c => (
+              {SILA_PALETTE.map(c => (
                 <button
                   key={c.name}
                   type="button"
                   onClick={()=>pickColor(c.name, c.hex)}
                   className={`h-9 w-9 rounded-full border ${colorName===c.name ? "ring-2 ring-offset-2 ring-black" : "opacity-90"}`}
                   title={c.name}
-                  style={{ background: c.hex }}
+                  style={{ background: c.hex.startsWith('linear-gradient') ? c.hex : c.hex }}
                 />
               ))}
             </div>

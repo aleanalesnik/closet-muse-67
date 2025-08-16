@@ -78,11 +78,25 @@ Deno.serve(async (req) => {
     }
 
     const result = await hf.json();
+    
+    // Extract normalized label for title building
+    function topLabelFromYolos(result: any): string | undefined {
+      const arr = Array.isArray(result) ? result : [];
+      if (!arr.length) return undefined;
+      const best = arr.reduce((a:any,b:any)=> ((b?.score??0)>(a?.score??0)?b:a), arr[0]);
+      const raw = (best?.label ?? best?.class ?? best?.category ?? "").toString();
+      // normalize a bit
+      return raw.replace(/_/g, " ").toLowerCase();
+    }
+    
+    const proposedTitle = topLabelFromYolos(result);
+    
     return new Response(JSON.stringify({
       status: 'success',
       model: 'valentinafeve/yolos-fashionpedia',
       latencyMs,
       result,
+      proposedTitle,
     }), {
       status: 200,
       headers: { ...baseHeaders, 'Content-Type': 'application/json' },
