@@ -23,6 +23,12 @@ export default function DetectionsOverlay({
   paddingPct = 0.1,
 }: Props) {
   console.log('[DEBUG DetectionsOverlay] itemBbox:', itemBbox, 'paddingPct:', paddingPct);
+  console.log('[DEBUG DetectionsOverlay] dimensions:', {naturalWidth, naturalHeight, renderedWidth, renderedHeight});
+  console.log('[DEBUG DetectionsOverlay] bbox validation:', {
+    isArray: Array.isArray(itemBbox),
+    length: itemBbox?.length,
+    hasNaturalDims: naturalWidth > 0 && naturalHeight > 0
+  });
   
   if (!preds || preds.length === 0 || !naturalWidth || !naturalHeight || !renderedWidth || !renderedHeight) {
     console.log('[DEBUG DetectionsOverlay] Not rendering - missing data');
@@ -32,20 +38,25 @@ export default function DetectionsOverlay({
   console.log('[DEBUG DetectionsOverlay] First pred box:', preds[0]?.box);
   
   
-  // Apply THE EXACT SAME transforms as SmartCropImg
+  // Apply THE EXACT SAME validation and transforms as SmartCropImg
   const iw = naturalWidth;
   const ih = naturalHeight; 
   const cw = renderedWidth;
   const ch = renderedHeight;
   
+  // Use the EXACT SAME validation logic as SmartCropImg
+  const isValidBbox = itemBbox && Array.isArray(itemBbox) && itemBbox.length === 4 && iw > 0 && ih > 0;
+  
   let imageScale, imageOffsetX, imageOffsetY;
   
-  if (!itemBbox) {
-    // No smart cropping - use simple object-fit: contain
+  if (!isValidBbox) {
+    console.log('[DEBUG DetectionsOverlay] Using simple object-fit:contain logic');
+    // No smart cropping - use simple object-fit: contain (matches SmartCropImg fallback)
     imageScale = Math.min(cw / iw, ch / ih);
     imageOffsetX = (cw - iw * imageScale) / 2;
     imageOffsetY = (ch - ih * imageScale) / 2;
   } else {
+    console.log('[DEBUG DetectionsOverlay] Using smart crop logic with bbox:', itemBbox);
     // Smart cropping is active - replicate SmartCropImg's exact logic
     const [x, y, w, h] = itemBbox; // normalized [0..1]
     const ow = w * iw;
