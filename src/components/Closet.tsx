@@ -22,6 +22,7 @@ interface Item {
   image_path: string;
   created_at: string;
   yolos_top_labels?: string[];
+  yolos_result?: any[];  // Array of detections for debug overlay
   bbox?: number[] | null;
 }
 
@@ -117,6 +118,18 @@ export default function Closet({ user }: ClosetProps) {
       if (error) throw error;
       const itemsData = data || [];
       setItems(itemsData);
+
+      // Load detections for existing items
+      const newDetections = new Map<string, YolosPred[]>();
+      itemsData.forEach(item => {
+        if (item.yolos_result && Array.isArray(item.yolos_result)) {
+          const preds = resultToDetections(item.yolos_result);
+          if (preds.length > 0) {
+            newDetections.set(item.id, preds);
+          }
+        }
+      });
+      setDetections(newDetections);
 
       const imagePaths = itemsData.map(item => item.image_path).filter(Boolean);
       if (imagePaths.length > 0) {
