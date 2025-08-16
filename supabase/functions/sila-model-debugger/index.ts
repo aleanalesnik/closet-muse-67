@@ -12,7 +12,7 @@ const cors = {
 const HF_ENDPOINT_URL = Deno.env.get("HF_ENDPOINT_URL") ?? "";
 const HF_TOKEN        = Deno.env.get("HF_TOKEN") ?? "";
 
-import { Image } from "https://deno.land/x/imagescript@1.2.15/mod.ts";
+import { decode } from "https://deno.land/x/imagescript@1.2.15/mod.ts";
 
 type RawBox = { xmin:number; ymin:number; xmax:number; ymax:number };
 type RawDet = { score:number; label:string; box?:RawBox | number[] };
@@ -44,12 +44,12 @@ const PART_LABELS = new Set([
 
 const GARMENT_GROUPS: Record<string,string[]> = {
   Dress:    ["dress","jumpsuit"],
-  Bottoms:  ["pants","shorts","skirt"],
-  Tops:     ["shirt, blouse","top, t-shirt, sweatshirt","sweater","cardigan","vest"],
-  Outerwear:["jacket","coat","cape"],
-  Shoes:    ["shoe"],
-  Bags:     ["bag, wallet"],
-  Accessory:["belt","glove","scarf","umbrella","glasses","hat","tie","leg warmer","tights, stockings","sock"],
+  Bottoms:  ["pants","shorts","skirt","jean","trouser"],
+  Tops:     ["shirt","blouse","t-shirt","top","sweater","sweatshirt","cardigan","vest"],
+  Outerwear:["jacket","coat","cape","blazer"],
+  Shoes:    ["shoe","boot","sneaker","heel","sandal"],
+  Bags:     ["bag","wallet","handbag","purse","tote","clutch","backpack"],
+  Accessory:["belt","glove","scarf","umbrella","glasses","sunglasses","hat","cap","tie","leg warmer","tight","stocking","sock"],
 };
 
 // ---------- COLOR PALETTE ----------
@@ -95,7 +95,7 @@ function rgbToHex(r:number,g:number,b:number){ return `#${hex(r)}${hex(g)}${hex(
 
 // very small + robust average
 async function averageColor(bytes: Uint8Array): Promise<{hex:string; name:string}> {
-  const img = await Image.decode(bytes).catch(()=>null);
+  const img = await decode(bytes).catch(()=>null);
   if (!img) return { hex:"#000000", name:"Black" };
   img.resize(48,48); // cheap downsample
   let r=0,g=0,b=0,c=0;
@@ -213,10 +213,15 @@ Deno.serve(async (req) => {
 
   const t0 = performance.now();
   try {
+    console.log("Received request:", req.method);
     if (req.method !== "POST") {
       return new Response(JSON.stringify({ status:"fail", error:"Method not allowed"}), { status:405, headers:{...cors,"Content-Type":"application/json"} });
     }
-    const body = await req.json().catch(()=> ({}));
+    const body = await req.json().catch((e)=> {
+      console.error("JSON parse error:", e);
+      return {};
+    });
+    console.log("Request body:", { imageUrl: body?.imageUrl ? "present" : "missing", threshold: body?.threshold });
     const imageUrl: string | undefined = body?.imageUrl;
     const threshold: number = typeof body?.threshold === "number" ? body.threshold : 0.12;
     if (!imageUrl) {
@@ -227,24 +232,33 @@ Deno.serve(async (req) => {
     }
 
     // 1) YOLOS
+    console.log("Calling HF API...");
     const raw = await callHF(imageUrl, threshold);
+    console.log("HF API response received:", raw?.length, "detections");
     const latencyMs = Math.round(performance.now() - t0);
 
     // normalize detections for overlay
+    console.log("Normalizing detections...");
     const dets = raw.map(r => {
       const nbox = r.box ? normalizeBox(r.box) : null;
       return { label: r.label ?? "", score: Number(r.score ?? 0), box: nbox };
     });
 
     // 2) choose primary garment only (never parts)
+    console.log("Picking primary garment...");
     const primary = pickPrimaryGarment(dets);
+    console.log("Primary garment:", primary?.label);
 
     const category = primary ? mapGarmentToCategory(primary.label) : "Clothing";
     const bbox = primary?.box ?? null;
+    console.log("Category:", category, "BBox:", bbox);
 
     // 3) color from actual pixels, then snap to palette
+    console.log("Fetching image for color extraction...");
     const { bytes } = await fetchToBytes(imageUrl);
+    console.log("Extracting color...");
     const { hex: colorHex, name: colorName } = await averageColor(bytes);
+    console.log("Color extracted:", colorName, colorHex);
 
     const proposedTitle = titleFrom(colorName, category);
 
