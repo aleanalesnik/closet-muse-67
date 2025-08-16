@@ -1,31 +1,26 @@
+import { supabase } from '@/lib/supabase';
+
+export async function waitUntilPublic(url: string) {
+  for (let i = 0; i < 6; i++) {
+    const r = await fetch(url, { method: 'HEAD', cache: 'no-store' }).catch(() => null);
+    if (r?.ok) return;
+    await new Promise(res => setTimeout(res, 250 * Math.pow(2, i))); // 250ms→8s
+  }
+  throw new Error('Public URL never became readable');
+}
+
+export async function detectYolosByUrl(publicUrl: string, threshold = 0.12) {
+  console.log('[YOLOS] invoking edge', { publicUrl, threshold });
+  const { data, error } = await supabase.functions.invoke('sila-model-debugger', {
+    body: { imageUrl: publicUrl, threshold },
+  });
+  if (error) throw error;
+  if (data?.status !== 'success') throw new Error('YOLOS failed: ' + JSON.stringify(data));
+  return data; // { status, model, latencyMs, result: [...] }
+}
+
 export type YolosBox = { xmin:number; ymin:number; xmax:number; ymax:number };
 export type YolosPred = { score:number; label:string; box:YolosBox };
-
-export async function runYolos(imageUrl: string) {
-  // First pass (playground-like)
-  const p1 = await fetch('/functions/v1/sila-model-debugger', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ imageUrl, threshold: 0.12 }),
-  });
-  const j1 = await p1.json().catch(()=> ({} as any));
-  console.log('[YOLOS] pass1:', j1);
-
-  let preds: YolosPred[] = Array.isArray(j1?.result) ? j1.result as any : [];
-
-  if (!preds.length) {
-    const p2 = await fetch('/functions/v1/sila-model-debugger', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ imageUrl, threshold: 0.06 }),
-    });
-    const j2 = await p2.json().catch(()=> ({} as any));
-    console.log('[YOLOS] pass2:', j2);
-    if (Array.isArray(j2?.result)) preds = j2.result as any;
-  }
-
-  return preds;
-}
 
 // Part labels to exclude from category mapping
 const PART_LABELS = new Set([

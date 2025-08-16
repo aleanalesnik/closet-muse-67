@@ -2,8 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
-import { waitUntilPublic } from '@/utils/storage';
-import { runYolos, pickPrimary, mapLabelToCategory, generateTitle } from '@/lib/yolos';
+import { waitUntilPublic, detectYolosByUrl, mapLabelToCategory, generateTitle, pickPrimary } from '@/lib/yolos';
 import { snapToPalette } from '@/utils/color';
 import SmartCropImg from '@/components/SmartCropImg';
 import { Button } from '@/components/ui/button';
@@ -184,30 +183,21 @@ export default function Closet({ user }: ClosetProps) {
         )
       );
       
-      // Get public URL - wait until it's actually readable
-      const { data: urlData } = supabase.storage.from('sila').getPublicUrl(imagePath);
-      const imageUrl = urlData.publicUrl;
+      // Get public URL and wait until it's accessible
+      const { data: pub } = supabase.storage.from('sila').getPublicUrl(imagePath);
+      const publicUrl = pub.publicUrl;
+      console.log('[FLOW] have path', imagePath);
+      console.log('[FLOW] publicUrl', publicUrl);
       
-      console.log('[YOLOS] Waiting for public URL to be readable:', imageUrl);
-      const urlReady = await waitUntilPublic(imageUrl);
+      await waitUntilPublic(publicUrl);
       
-      if (!urlReady) {
-        console.error('[YOLOS] Public URL not ready after retries');
-        setUploadingItems(prev => prev.filter(item => item.id !== uploadingId));
-        toast({
-          title: 'Upload failed',
-          description: 'Image not accessible after upload',
-          variant: 'destructive'
-        });
-        return;
-      }
+      // Call YOLOS edge function
+      const yolos = await detectYolosByUrl(publicUrl, 0.12);
+      console.log('[YOLOS] result', yolos);
       
-      console.log('[YOLOS] Starting', { itemId, imageUrl });
-
-      const preds = await runYolos(imageUrl);
-      console.log('[YOLOS] detections:', preds);
-
+      const preds = Array.isArray(yolos.result) ? yolos.result : [];
       const primary = pickPrimary(preds);
+      
       let category: string | null = null;
       let bbox: number[] | null = null;
 
@@ -218,23 +208,24 @@ export default function Closet({ user }: ClosetProps) {
       }
 
       // Always compute/snap color from full image
-      const dominantHex = await dominantHexFromUrl(imageUrl);
+      const dominantHex = await dominantHexFromUrl(publicUrl);
       const { name: colorName, hex: colorHex } = snapToPalette(dominantHex);
 
       const title = generateTitle({ colorName, category });
       console.log('[TITLE] color/category ->', colorName, category, title);
 
-      // Build update payload with safe types - only persist category-level data
+      // Build update payload - only persist category-level data
       const updatePayload: any = {
         title,
         category,
         color_name: colorName,
         color_hex: colorHex,
         bbox,
-        // Optional: store top 3 labels for debugging
         yolos_top_labels: Array.isArray(preds)
           ? preds.sort((a,b)=> (b.score??0)-(a.score??0)).slice(0,3).map(p => String(p.label || '')).filter(Boolean)
           : null,
+        yolos_latency_ms: yolos.latencyMs ?? null,
+        yolos_model: yolos.model ?? null,
       };
 
       console.log('[YOLOS] Persisting:', updatePayload);
