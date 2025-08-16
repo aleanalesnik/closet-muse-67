@@ -27,14 +27,42 @@ export default function DetectionsOverlay({
 
   console.log('[DEBUG DetectionsOverlay] First pred box:', preds[0]?.box);
   
+  // The issue: SmartCropImg applies transforms, but we're mapping coordinates to the container
+  // Solution: Account for how the image is actually displayed within the container
+  
+  // Calculate how the image fits within the container (similar to object-fit: contain)
+  const imageAspectRatio = naturalWidth / naturalHeight;
+  const containerAspectRatio = renderedWidth / renderedHeight;
+  
+  let displayedImageWidth, displayedImageHeight, imageOffsetX, imageOffsetY;
+  
+  if (imageAspectRatio > containerAspectRatio) {
+    // Image is wider - fits to container width, centered vertically
+    displayedImageWidth = renderedWidth;
+    displayedImageHeight = renderedWidth / imageAspectRatio;
+    imageOffsetX = 0;
+    imageOffsetY = (renderedHeight - displayedImageHeight) / 2;
+  } else {
+    // Image is taller - fits to container height, centered horizontally  
+    displayedImageWidth = renderedHeight * imageAspectRatio;
+    displayedImageHeight = renderedHeight;
+    imageOffsetX = (renderedWidth - displayedImageWidth) / 2;
+    imageOffsetY = 0;
+  }
+  
+  console.log('[DEBUG DetectionsOverlay] Image display:', {
+    displayedImageWidth, displayedImageHeight, imageOffsetX, imageOffsetY,
+    imageAspectRatio, containerAspectRatio
+  });
+
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
       {preds.map((p, i) => {
-        // Our coordinates are normalized [0,1], so multiply directly by rendered size
-        const w = (p.box.xmax - p.box.xmin) * renderedWidth;
-        const h = (p.box.ymax - p.box.ymin) * renderedHeight;
-        const x = p.box.xmin * renderedWidth;
-        const y = p.box.ymin * renderedHeight;
+        // Map normalized coordinates to the displayed image area
+        const w = (p.box.xmax - p.box.xmin) * displayedImageWidth;
+        const h = (p.box.ymax - p.box.ymin) * displayedImageHeight;
+        const x = p.box.xmin * displayedImageWidth + imageOffsetX;
+        const y = p.box.ymin * displayedImageHeight + imageOffsetY;
         const pct = Math.round(p.score * 100);
 
         console.log(`[DEBUG DetectionsOverlay] Box ${i}: raw=(${p.box.xmin},${p.box.ymin},${p.box.xmax},${p.box.ymax}), rendered=(${x},${y},${w},${h})`);
