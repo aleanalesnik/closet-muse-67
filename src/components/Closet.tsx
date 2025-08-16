@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
+import { waitUntilPublic } from '@/utils/storage';
 import { PALETTE, snapToPalette } from '@/utils/color';
 import { mapYolosToTaxonomy, buildProposedTitle } from '@/utils/yolosMap';
 import SmartCropImg from '@/components/SmartCropImg';
@@ -171,9 +172,23 @@ export default function Closet({ user }: ClosetProps) {
         )
       );
       
-      // Get public URL and call YOLOS
+      // Get public URL - wait until it's actually readable
       const { data: urlData } = supabase.storage.from('sila').getPublicUrl(imagePath);
       const imageUrl = urlData.publicUrl;
+      
+      console.log('[YOLOS] Waiting for public URL to be readable:', imageUrl);
+      const urlReady = await waitUntilPublic(imageUrl);
+      
+      if (!urlReady) {
+        console.error('[YOLOS] Public URL not ready after retries');
+        setUploadingItems(prev => prev.filter(item => item.id !== uploadingId));
+        toast({
+          title: 'Upload failed',
+          description: 'Image not accessible after upload',
+          variant: 'destructive'
+        });
+        return;
+      }
       
       console.log('[YOLOS] Calling edge function with:', imageUrl);
       
@@ -186,48 +201,76 @@ export default function Closet({ user }: ClosetProps) {
         body: JSON.stringify({ imageUrl, threshold: 0.12 })
       });
       
-      const detectJson = await detectRes.json();
-      console.log('[YOLOS] Response:', detectJson);
+      const data = await detectRes.json();
+      console.log('[YOLOS] Response:', data);
       
-      if (detectRes.ok && detectJson.status === 'success') {
-        // Use edge function result or compute locally
-        const colorHex = detectJson.colorHex || await dominantHexFromUrl(imageUrl);
-        const { name: colorName } = snapToPalette(colorHex);
-        
-        const category = detectJson.category;
-        const subcategory = detectJson.subcategory;
-        const proposedTitle = detectJson.proposedTitle || buildProposedTitle({
-          colorName, 
-          category, 
-          subcategory
+      if (!detectRes.ok || data.status !== 'success' || !data.result) {
+        console.error('[YOLOS] Skipping persist due to failed detection', data);
+        setUploadingItems(prev => prev.filter(item => item.id !== uploadingId));
+        toast({
+          title: 'YOLOS analysis failed',
+          description: 'Could not analyze the image',
+          variant: 'destructive'
         });
+        return;
+      }
+      
+      // Extract data with proper types
+      const {
+        proposedTitle,
+        category,
+        subcategory,
+        colorName,
+        colorHex,
+        bbox,
+        result,
+        latencyMs,
+        model,
+      } = data as any;
+
+      // Build top labels array with proper type casting
+      const topLabels: string[] =
+        Array.isArray(result)
+          ? result
+              .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
+              .slice(0, 3)
+              .map((r: any) => String(r.label ?? ""))
+              .filter(Boolean)
+          : [];
+
+      // Build update payload with safe types
+      const updatePayload: any = {
+        title: proposedTitle ?? null,
+        category: category ?? null,
+        subcategory: subcategory ?? null,
+        color_name: colorName ?? null,
+        color_hex: colorHex ?? null,
+        yolos_top_labels: topLabels.length ? topLabels : null,
+        yolos_latency_ms: typeof latencyMs === "number" ? Math.round(latencyMs) : null,
+        yolos_model: model ?? "valentinafeve/yolos-fashionpedia",
+        bbox: Array.isArray(bbox) && bbox.length === 4 ? bbox.map(Number) : null,
+      };
+
+      console.log('[YOLOS] Persisting:', updatePayload);
+      
+      const { error: updateErr } = await supabase
+        .from('items')
+        .update(updatePayload)
+        .eq('id', itemId);
         
-        // Update item in database
-        const updatePayload = {
-          title: proposedTitle,
-          category,
-          subcategory,
-          color_name: colorName,
-          color_hex: colorHex,
-          bbox: detectJson.bbox,
-          yolos_top_labels: detectJson.yolosTopLabels,
-          yolos_latency_ms: detectJson.latencyMs
-        };
-        
-        const { error: updateErr } = await supabase
-          .from('items')
-          .update(updatePayload)
-          .eq('id', itemId);
-          
-        if (!updateErr) {
-          console.log('[YOLOS] Persist success:', updatePayload);
-          toast({
-            title: 'Analysis complete',
-            description: `Detected: ${subcategory || category || 'item'}, Color: ${colorName}`
-          });
-        } else {
-          console.error('[YOLOS] Persist failed:', updateErr);
-        }
+      if (updateErr) {
+        console.error('[YOLOS] Persist failed:', updateErr);
+        toast({
+          title: 'Save failed',
+          description: updateErr.message,
+          variant: 'destructive'
+        });
+      } else {
+        console.log('[YOLOS] Persist OK');
+        toast({
+          title: 'Analysis complete',
+          description: `Detected: ${subcategory || category || 'item'}, Color: ${colorName || 'unknown'}`
+        });
       }
       
       // Remove from uploading and refresh items
