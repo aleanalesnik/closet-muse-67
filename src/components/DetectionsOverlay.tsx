@@ -25,18 +25,20 @@ export default function DetectionsOverlay({
     return null;
   }
 
-  const sx = renderedWidth / naturalWidth;
-  const sy = renderedHeight / naturalHeight;
-
+  console.log('[DEBUG DetectionsOverlay] First pred box:', preds[0]?.box);
+  
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
       {preds.map((p, i) => {
-        const w = (p.box.xmax - p.box.xmin) * sx;
-        const h = (p.box.ymax - p.box.ymin) * sy;
-        const x = p.box.xmin * sx;
-        const y = p.box.ymin * sy;
+        // Our coordinates are normalized [0,1], so multiply directly by rendered size
+        const w = (p.box.xmax - p.box.xmin) * renderedWidth;
+        const h = (p.box.ymax - p.box.ymin) * renderedHeight;
+        const x = p.box.xmin * renderedWidth;
+        const y = p.box.ymin * renderedHeight;
         const pct = Math.round(p.score * 100);
 
+        console.log(`[DEBUG DetectionsOverlay] Box ${i}: raw=(${p.box.xmin},${p.box.ymin},${p.box.xmax},${p.box.ymax}), rendered=(${x},${y},${w},${h})`);
+        
         return (
           <div 
             key={i} 
