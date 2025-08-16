@@ -65,8 +65,9 @@ function toNormBox(b: any): [number,number,number,number] | null {
   let [x1, y1, x2, y2] = arr.map(Number);
   if (![x1,y1,x2,y2].every(Number.isFinite)) return null;
 
-  // guard: some models produce [1,1,1,1] when they mean "no box"
-  if (x1 === 1 && y1 === 1 && x2 === 1 && y2 === 1) return null;
+  // TEMPORARILY DISABLED - let malformed boxes through to debug
+  // // guard: some models produce [1,1,1,1] when they mean "no box"
+  // if (x1 === 1 && y1 === 1 && x2 === 1 && y2 === 1) return null;
 
   const clamp = (v:number) => Math.min(1, Math.max(0, v));
   x1 = clamp(Math.min(x1, x2));
@@ -75,7 +76,8 @@ function toNormBox(b: any): [number,number,number,number] | null {
   y2 = clamp(Math.max(y1, y2));
 
   const w = x2 - x1, h = y2 - y1;
-  if (w <= 0.01 || h <= 0.01) return null; // ignore tiny/degenerate boxes
+  // TEMPORARILY DISABLED - allow tiny boxes through to debug
+  // if (w <= 0.01 || h <= 0.01) return null; // ignore tiny/degenerate boxes
   return [x1, y1, x2, y2];
 }
 

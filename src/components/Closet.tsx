@@ -239,8 +239,13 @@ export default function Closet({ user }: ClosetProps) {
       
       // Store detections in memory for overlay
       if (analysis.yolos_result) {
+        console.log('[CLIENT DEBUG] Raw yolos_result length:', analysis.yolos_result.length);
+        console.log('[CLIENT DEBUG] Raw yolos_result:', analysis.yolos_result);
         const preds = resultToDetections(analysis.yolos_result);
+        console.log('[CLIENT DEBUG] Converted preds:', preds);
         setItemDetections(itemId, preds);
+      } else {
+        console.log('[CLIENT DEBUG] No yolos_result in analysis');
       }
       
       // Analysis result is ready to persist
