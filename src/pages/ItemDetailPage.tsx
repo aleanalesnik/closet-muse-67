@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { PALETTE } from "@/utils/color";
 import SmartCropImg from "@/components/SmartCropImg";
+import DetectionsOverlay from "@/components/DetectionsOverlay";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,6 +24,9 @@ type ItemRow = {
   bbox?: { xmin: number; ymin: number; xmax: number; ymax: number } | number[] | null;
 };
 
+// Debug types
+type YolosBox = { xmin: number; ymin: number; xmax: number; ymax: number };
+type YolosPred = { label: string; score: number; box: YolosBox };
 
 const CATEGORY_OPTIONS = ["accessory","bag","bottom","dress","outerwear","shoes","top"] as const;
 
@@ -45,6 +49,12 @@ export default function ItemDetailPage() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [debugDetections, setDebugDetections] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({
+    naturalWidth: 0, naturalHeight: 0, renderedWidth: 0, renderedHeight: 0
+  });
 
   // form state
   const [title, setTitle] = useState("");
@@ -60,6 +70,10 @@ export default function ItemDetailPage() {
   }, [category]);
 
   useEffect(() => {
+    // Load debug toggle
+    const saved = localStorage.getItem('sila.debugDetections');
+    if (saved === 'true') setDebugDetections(true);
+    
     (async () => {
       // load item
       const { data: { user } } = await supabase.auth.getUser();
@@ -89,6 +103,35 @@ export default function ItemDetailPage() {
       if (signed?.signedUrl) setImageUrl(signed.signedUrl);
     })();
   }, [id]);
+
+  // Update image dimensions for overlay
+  useEffect(() => {
+    const img = imgRef.current;
+    const container = containerRef.current;
+    if (!img || !container) return;
+
+    const updateDimensions = () => {
+      setDimensions({
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+        renderedWidth: container.clientWidth,
+        renderedHeight: container.clientHeight
+      });
+    };
+
+    const handleLoad = () => updateDimensions();
+    const handleResize = () => updateDimensions();
+    
+    img.addEventListener('load', handleLoad);
+    window.addEventListener('resize', handleResize);
+    
+    if (img.complete) handleLoad();
+    
+    return () => {
+      img.removeEventListener('load', handleLoad);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [imageUrl]);
 
   // if user picks a color swatch
   function pickColor(name: string, hex: string) {
@@ -162,17 +205,29 @@ export default function ItemDetailPage() {
       <div className="grid md:grid-cols-2 gap-6">
         <div className="rounded-xl overflow-hidden bg-muted flex items-center justify-center" style={{ aspectRatio: '4/3' }}>
           {imageUrl ? (
-          <SmartCropImg 
-            src={imageUrl}
-            bbox={item?.bbox ? 
-              Array.isArray(item.bbox) 
-                ? { xmin: item.bbox[0], ymin: item.bbox[1], xmax: item.bbox[2], ymax: item.bbox[3] }
-                : item.bbox
-              : null
-            }
-            alt={title || "item"}
-            className="aspect-[4/3] rounded-2xl"
-          />
+          <div className="relative w-full h-full" ref={containerRef}>
+            <SmartCropImg 
+              ref={imgRef}
+              src={imageUrl}
+              bbox={item?.bbox ? 
+                Array.isArray(item.bbox) 
+                  ? { xmin: item.bbox[0], ymin: item.bbox[1], xmax: item.bbox[2], ymax: item.bbox[3] }
+                  : item.bbox
+                : null
+              }
+              alt={title || "item"}
+              className="aspect-[4/3] rounded-2xl"
+            />
+            {debugDetections && (
+              <DetectionsOverlay
+                preds={[]} // No in-memory detections on item page
+                naturalWidth={dimensions.naturalWidth}
+                naturalHeight={dimensions.naturalHeight}
+                renderedWidth={dimensions.renderedWidth}
+                renderedHeight={dimensions.renderedHeight}
+              />
+            )}
+          </div>
           ) : (
             <div className="text-sm text-muted-foreground">No image</div>
           )}

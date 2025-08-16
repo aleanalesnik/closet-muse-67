@@ -14,13 +14,13 @@ type SmartCropImgProps = {
  * - With bbox: zoom to detected item with ~10% padding
  * - Handles both pixel and normalized coordinates
  */
-export default function SmartCropImg({
+const SmartCropImg = React.forwardRef<HTMLImageElement, SmartCropImgProps>(({
   src,
   alt = "",
   bbox,
   className = "",
   padding = 0.1,
-}: SmartCropImgProps) {
+}, ref) => {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageStyle, setImageStyle] = useState<React.CSSProperties>({});
   const imgRef = useRef<HTMLImageElement>(null);
@@ -98,9 +98,16 @@ export default function SmartCropImg({
   }, [bbox, imageLoaded]);
 
   return (
-    <div className={`w-full h-full overflow-hidden bg-white ${className}`}>
+    <div className={`relative w-full h-full overflow-hidden bg-white ${className}`}>
       <img
-        ref={imgRef}
+        ref={(node) => {
+          imgRef.current = node;
+          if (typeof ref === 'function') {
+            ref(node);
+          } else if (ref) {
+            ref.current = node;
+          }
+        }}
         src={src}
         alt={alt}
         className="w-full h-full"
@@ -112,4 +119,8 @@ export default function SmartCropImg({
       />
     </div>
   );
-}
+});
+
+SmartCropImg.displayName = 'SmartCropImg';
+
+export default SmartCropImg;

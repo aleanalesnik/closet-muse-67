@@ -2,14 +2,15 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
-import { waitUntilPublic, detectYolosByUrl, mapLabelToCategory, generateTitle, pickPrimary } from '@/lib/yolos';
-
+import { waitUntilPublic, detectYolosByUrl } from '@/lib/yolos';
 import SmartCropImg from '@/components/SmartCropImg';
+import DetectionsOverlay from '@/components/DetectionsOverlay';
+import ItemCard from '@/components/ItemCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, Loader2, Trash2, X, Square, CheckSquare } from 'lucide-react';
+import { Upload, Loader2, Trash2, X, Square, CheckSquare, Eye, EyeOff } from 'lucide-react';
 
 interface Item {
   id: string;
@@ -21,7 +22,7 @@ interface Item {
   image_path: string;
   created_at: string;
   yolos_top_labels?: string[];
-  bbox?: { xmin: number; ymin: number; xmax: number; ymax: number } | null;
+  bbox?: number[] | null;
 }
 
 interface UploadingItem {
@@ -35,6 +36,11 @@ interface UploadingItem {
 interface ClosetProps {
   user: any;
 }
+
+// Types for YOLOS detections
+type YolosBox = { xmin: number; ymin: number; xmax: number; ymax: number };
+type YolosPred = { label: string; score: number; box: YolosBox };
+type DetectionsMap = Map<string, YolosPred[]>;
 
 // Helper to process edge function response
 function processEdgeResponse(res: any) {
@@ -75,12 +81,31 @@ export default function Closet({ user }: ClosetProps) {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [debugDetections, setDebugDetections] = useState(false);
+  const [detections, setDetections] = useState<DetectionsMap>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   useEffect(() => {
     loadItems();
+    // Load debug toggle from localStorage
+    const saved = localStorage.getItem('sila.debugDetections');
+    if (saved === 'true') setDebugDetections(true);
   }, []);
+
+  const setItemDetections = (itemId: string, preds: YolosPred[]) => {
+    setDetections(prev => {
+      const next = new Map(prev);
+      next.set(itemId, preds);
+      return next;
+    });
+  };
+
+  const toggleDebugDetections = () => {
+    const newState = !debugDetections;
+    setDebugDetections(newState);
+    localStorage.setItem('sila.debugDetections', newState ? 'true' : 'false');
+  };
 
   const loadItems = async () => {
     try {
@@ -184,10 +209,23 @@ export default function Closet({ user }: ClosetProps) {
       
       await waitUntilPublic(publicUrl);
       
-      // Call YOLOS edge function
       console.info('[YOLOS] invoking', { publicUrl, threshold: 0.12 });
       const yolos = await detectYolosByUrl(publicUrl, 0.12);
       console.info('[YOLOS] result', yolos);
+      
+      // Store detections in memory for overlay
+      if (yolos.status === 'success' && Array.isArray(yolos.result)) {
+        const preds: YolosPred[] = yolos.result
+          .filter((p: any) => p?.box && typeof p?.score === 'number' && p?.label)
+          .sort((a: any, b: any) => b.score - a.score)
+          .slice(0, 3)
+          .map((p: any) => ({ 
+            label: String(p.label), 
+            score: Number(p.score), 
+            box: p.box 
+          }));
+        setItemDetections(itemId, preds);
+      }
       
       // Process edge response - this is the single source of truth
       const updatePayload = processEdgeResponse(yolos);
@@ -310,7 +348,6 @@ export default function Closet({ user }: ClosetProps) {
           <h1 className="text-3xl font-bold text-foreground">My Closet</h1>
           <p className="text-muted-foreground mt-1">{items.length} items in your collection</p>
         </div>
-        
         <div className="flex gap-4">
           <input
             ref={fileInputRef}
@@ -344,6 +381,15 @@ export default function Closet({ user }: ClosetProps) {
             </div>
           ) : (
             <>
+              <Button 
+                onClick={toggleDebugDetections} 
+                variant="outline" 
+                size="sm"
+                className="flex items-center gap-2"
+              >
+                {debugDetections ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                Debug: Detections
+              </Button>
               <Button onClick={toggleSelectionMode} disabled={items.length === 0} variant="outline" className="flex items-center gap-2">
                 <CheckSquare className="w-4 h-4" />
                 Select
@@ -383,80 +429,16 @@ export default function Closet({ user }: ClosetProps) {
                     <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
                   </CardContent>
                 </Card>
-              ) : isSelectionMode ? (
-                <Card 
-                  className={`overflow-hidden transition-all cursor-pointer ${
-                    selectedItems.has(item.id) ? 'ring-2 ring-primary shadow-lg' : 'hover:shadow-lg'
-                  }`} 
-                  onClick={() => toggleItemSelection(item.id)}
-                >
-                  <div className="aspect-square relative">
-                       <SmartCropImg 
-                         src={imageUrl}
-                         bbox={Array.isArray(item.bbox) && item.bbox.length === 4 ? item.bbox : null}
-                         alt={item.title || 'Closet item'}
-                         className="aspect-square rounded-xl"
-                         padding={0.1}
-                       />
-                    <div className="absolute top-2 right-2 bg-background/80 rounded-full p-1">
-                      {selectedItems.has(item.id) ? (
-                        <CheckSquare className="w-5 h-5 text-primary" />
-                      ) : (
-                        <Square className="w-5 h-5 text-muted-foreground" />
-                      )}
-                    </div>
-                  </div>
-                  <CardContent className="p-4">
-                    <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
-                     <div className="flex flex-wrap gap-1 mb-2">
-                       {item.category && (
-                         <Badge variant="secondary" className="text-xs">
-                           {item.category}
-                         </Badge>
-                       )}
-                       {item.subcategory && (
-                         <Badge variant="outline" className="text-xs">
-                           {item.subcategory}
-                         </Badge>
-                       )}
-                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      Added {new Date(item.created_at).toLocaleDateString()}
-                    </div>
-                  </CardContent>
-                </Card>
               ) : (
-                <Link to={`/item/${item.id}`} className="block">
-                  <Card className="overflow-hidden hover:shadow-lg transition-shadow">
-                    <div className="aspect-square relative">
-                       <SmartCropImg 
-                         src={imageUrl}
-                         bbox={Array.isArray(item.bbox) && item.bbox.length === 4 ? item.bbox : null}
-                         alt={item.title || 'Closet item'}
-                         className="aspect-square rounded-xl"
-                         padding={0.1}
-                       />
-                    </div>
-                    <CardContent className="p-4">
-                      <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
-                       <div className="flex flex-wrap gap-1 mb-2">
-                         {item.category && (
-                           <Badge variant="secondary" className="text-xs">
-                             {item.category}
-                           </Badge>
-                         )}
-                         {item.subcategory && (
-                           <Badge variant="outline" className="text-xs">
-                             {item.subcategory}
-                           </Badge>
-                         )}
-                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        Added {new Date(item.created_at).toLocaleDateString()}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
+                <ItemCard
+                  item={item}
+                  imageUrl={imageUrl}
+                  isSelectionMode={isSelectionMode}
+                  isSelected={selectedItems.has(item.id)}
+                  onToggleSelection={() => toggleItemSelection(item.id)}
+                  debugDetections={debugDetections}
+                  detectionPreds={detections.get(item.id)}
+                />
               )}
             </div>
           );
