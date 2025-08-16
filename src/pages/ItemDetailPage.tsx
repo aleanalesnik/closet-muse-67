@@ -209,14 +209,21 @@ export default function ItemDetailPage() {
             <SmartCropImg 
               ref={imgRef}
               src={imageUrl}
-              bbox={item?.bbox ? 
-                Array.isArray(item.bbox) 
-                  ? { xmin: item.bbox[0], ymin: item.bbox[1], xmax: item.bbox[2], ymax: item.bbox[3] }
-                  : item.bbox
+              bbox={item?.bbox && Array.isArray(item.bbox) && item.bbox.length === 4 
+                ? [item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3]]
                 : null
               }
               alt={title || "item"}
               className="aspect-[4/3] rounded-2xl"
+              paddingPct={0.1}
+              onMetrics={(metrics) => {
+                setDimensions({
+                  naturalWidth: metrics.imgW,
+                  naturalHeight: metrics.imgH,
+                  renderedWidth: metrics.cw,
+                  renderedHeight: metrics.ch
+                });
+              }}
             />
             {debugDetections && (
               <DetectionsOverlay

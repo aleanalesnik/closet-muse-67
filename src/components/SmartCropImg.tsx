@@ -1,122 +1,136 @@
-import React, { useLayoutEffect, useRef, useState } from "react";
+import React from "react";
 
-type SmartCropImgProps = {
+type BBox = [number, number, number, number];
+
+type Props = {
   src: string;
+  bbox?: BBox | null;
+  paddingPct?: number; // e.g., 0.10 for 10%
   alt?: string;
-  bbox?: { xmin: number; ymin: number; xmax: number; ymax: number } | number[] | null;
   className?: string;
-  padding?: number;
+  onMetrics?: (m: {
+    scale: number; tx: number; ty: number;
+    imgW: number; imgH: number; cw: number; ch: number;
+  }) => void;
 };
 
-/**
- * SmartCropImg: Renders images with smart cropping
- * - Default: tight center crop (cover)
- * - With bbox: zoom to detected item with ~10% padding
- * - Handles both pixel and normalized coordinates
- */
-const SmartCropImg = React.forwardRef<HTMLImageElement, SmartCropImgProps>(({
-  src,
-  alt = "",
-  bbox,
-  className = "",
-  padding = 0.1,
-}, ref) => {
-  const [imageLoaded, setImageLoaded] = useState(false);
-  const [imageStyle, setImageStyle] = useState<React.CSSProperties>({});
-  const imgRef = useRef<HTMLImageElement>(null);
+const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
+  src, bbox, paddingPct = 0.10, alt = "", className = "", onMetrics
+}: Props, ref) => {
+  const imgRef = React.useRef<HTMLImageElement | null>(null);
+  const wrapRef = React.useRef<HTMLDivElement | null>(null);
+  const [natural, setNatural] = React.useState<{w:number; h:number} | null>(null);
+  const [transform, setTransform] = React.useState<{scale:number; tx:number; ty:number} | null>(null);
 
-  const computeCrop = () => {
-    const img = imgRef.current;
-    if (!img || !imageLoaded) return;
+  const compute = React.useCallback(() => {
+    if (!imgRef.current || !wrapRef.current || !natural) return;
+    const cw = wrapRef.current.clientWidth || 0;
+    const ch = wrapRef.current.clientHeight || 0;
+    const imgW = natural.w;
+    const imgH = natural.h;
 
-    const natW = img.naturalWidth;
-    const natH = img.naturalHeight;
-    if (!natW || !natH) return;
-
-    // If no bbox, use standard cover crop
-    if (!bbox) {
-      setImageStyle({
-        width: '100%',
-        height: '100%',
-        objectFit: 'cover',
-        objectPosition: 'center',
-      });
+    if (!bbox || cw === 0 || ch === 0 || imgW === 0 || imgH === 0) {
+      setTransform(null);
+      onMetrics?.({ scale: 1, tx: 0, ty: 0, imgW, imgH, cw, ch });
       return;
     }
 
-    // Get bbox coordinates (handle both pixel and normalized, and array format)
-    let xmin: number, ymin: number, xmax: number, ymax: number;
-    
-    if (Array.isArray(bbox) && bbox.length === 4) {
-      [xmin, ymin, xmax, ymax] = bbox;
-    } else if (bbox && typeof bbox === 'object' && 'xmin' in bbox) {
-      ({ xmin, ymin, xmax, ymax } = bbox);
-    } else {
-      return;
-    }
-    
-    // If coordinates are between 0-1, assume normalized
-    if (xmax <= 1 && ymax <= 1) {
-      xmin *= natW;
-      ymin *= natH;
-      xmax *= natW;
-      ymax *= natH;
-    }
+    // Clamp + pad bbox in original image space
+    let [xmin, ymin, xmax, ymax] = bbox.map(n => Math.max(0, n)) as BBox;
+    xmax = Math.min(xmax, imgW);
+    ymax = Math.min(ymax, imgH);
+    xmin = Math.min(xmin, xmax - 1);
+    ymin = Math.min(ymin, ymax - 1);
 
-    // Add padding
     const bw = xmax - xmin;
     const bh = ymax - ymin;
-    const pad = padding;
-    
-    xmin = Math.max(0, xmin - bw * pad);
-    ymin = Math.max(0, ymin - bh * pad);
-    xmax = Math.min(natW, xmax + bw * pad);
-    ymax = Math.min(natH, ymax + bh * pad);
+    const pad = Math.max(bw, bh) * paddingPct;
 
-    const cropW = xmax - xmin;
-    const cropH = ymax - ymin;
-    
-    // Calculate position percentages for object-position
-    const centerX = (xmin + cropW / 2) / natW;
-    const centerY = (ymin + cropH / 2) / natH;
+    let pxmin = Math.max(0, xmin - pad);
+    let pymin = Math.max(0, ymin - pad);
+    let pxmax = Math.min(imgW, xmax + pad);
+    let pymax = Math.min(imgH, ymax + pad);
 
-    // Calculate scale for object-fit
-    const scaleX = natW / cropW;
-    const scaleY = natH / cropH;
-    const scale = Math.min(scaleX, scaleY);
+    const pbw = pxmax - pxmin;
+    const pbh = pymax - pymin;
 
-    setImageStyle({
-      width: `${scale * 100}%`,
-      height: `${scale * 100}%`,
-      objectFit: 'cover',
-      objectPosition: `${centerX * 100}% ${centerY * 100}%`,
-    });
-  };
+    // Scale so padded bbox fits inside container
+    const scale = Math.min(cw / pbw, ch / pbh);
 
-  useLayoutEffect(() => {
-    computeCrop();
-  }, [bbox, imageLoaded]);
+    // Center padded bbox in container
+    const bxCenter = pxmin + pbw / 2;
+    const byCenter = pymin + pbh / 2;
+
+    // After scaling, top-left of the image in container coords:
+    const tx = cw / 2 - scale * bxCenter;  // translateX in px
+    const ty = ch / 2 - scale * byCenter;  // translateY in px
+
+    setTransform({ scale, tx, ty });
+    onMetrics?.({ scale, tx, ty, imgW, imgH, cw, ch });
+  }, [bbox, paddingPct, natural, onMetrics]);
+
+  React.useEffect(() => {
+    const i = imgRef.current;
+    if (!i) return;
+    if (i.complete && i.naturalWidth && i.naturalHeight) {
+      setNatural({ w: i.naturalWidth, h: i.naturalHeight });
+    } else {
+      const onLoad = () => setNatural({ w: i.naturalWidth, h: i.naturalHeight });
+      i.addEventListener("load", onLoad);
+      return () => i.removeEventListener("load", onLoad);
+    }
+  }, [src]);
+
+  React.useEffect(() => {
+    compute();
+    const onResize = () => compute();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [compute]);
 
   return (
-    <div className={`relative w-full h-full overflow-hidden bg-white ${className}`}>
-      <img
-        ref={(node) => {
-          imgRef.current = node;
-          if (typeof ref === 'function') {
-            ref(node);
-          } else if (ref) {
-            ref.current = node;
-          }
-        }}
-        src={src}
-        alt={alt}
-        className="w-full h-full"
-        style={imageStyle}
-        onLoad={() => {
-          setImageLoaded(true);
-        }}
-        loading="lazy"
-      />
+    <div ref={wrapRef} className={`relative w-full h-full overflow-hidden ${className}`}>
+      {/* When we have a bbox and computed transform: absolutely position + transform the image */}
+      {transform ? (
+        <img
+          ref={(node) => {
+            imgRef.current = node;
+            if (typeof ref === 'function') {
+              ref(node);
+            } else if (ref) {
+              ref.current = node;
+            }
+          }}
+          src={src}
+          alt={alt}
+          style={{
+            position: "absolute",
+            top: 0, left: 0,
+            width: natural?.w ?? undefined,
+            height: natural?.h ?? undefined,
+            transform: `translate(${transform.tx}px, ${transform.ty}px) scale(${transform.scale})`,
+            transformOrigin: "top left",
+            willChange: "transform"
+          }}
+          draggable={false}
+        />
+      ) : (
+        // Fallback: normal cover-fit centered
+        <img
+          ref={(node) => {
+            imgRef.current = node;
+            if (typeof ref === 'function') {
+              ref(node);
+            } else if (ref) {
+              ref.current = node;
+            }
+          }}
+          src={src}
+          alt={alt}
+          className="w-full h-full object-cover object-center"
+          draggable={false}
+        />
+      )}
     </div>
   );
 });

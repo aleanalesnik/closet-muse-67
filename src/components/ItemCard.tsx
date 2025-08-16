@@ -90,10 +90,18 @@ export default function ItemCard({
         <SmartCropImg 
           ref={imgRef}
           src={imageUrl}
-          bbox={Array.isArray(item.bbox) && item.bbox.length === 4 ? item.bbox : null}
+          bbox={Array.isArray(item.bbox) && item.bbox.length === 4 ? [item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3]] : null}
           alt={item.title || 'Closet item'}
           className="aspect-square rounded-xl"
-          padding={0.1}
+          paddingPct={0.1}
+          onMetrics={(metrics) => {
+            setDimensions({
+              naturalWidth: metrics.imgW,
+              naturalHeight: metrics.imgH,
+              renderedWidth: metrics.cw,
+              renderedHeight: metrics.ch
+            });
+          }}
         />
         
         {showOverlay && (
