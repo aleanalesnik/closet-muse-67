@@ -22,7 +22,12 @@ export default function DetectionsOverlay({
   itemBbox,
   paddingPct = 0.1,
 }: Props) {
+  console.log('[DetectionsOverlay] Render called', { 
+    preds: preds?.length, naturalWidth, naturalHeight, renderedWidth, renderedHeight, itemBbox 
+  });
+  
   if (!preds || preds.length === 0 || !naturalWidth || !naturalHeight || !renderedWidth || !renderedHeight) {
+    console.log('[DetectionsOverlay] Early return - missing data');
     return null;
   }
   
@@ -39,11 +44,13 @@ export default function DetectionsOverlay({
   let imageScale, imageOffsetX, imageOffsetY;
   
   if (!isValidBbox) {
+    console.log('[DetectionsOverlay] No smart cropping - using simple contain');
     // No smart cropping - use simple object-fit: contain (matches SmartCropImg fallback)
     imageScale = Math.min(cw / iw, ch / ih);
     imageOffsetX = (cw - iw * imageScale) / 2;
     imageOffsetY = (ch - ih * imageScale) / 2;
   } else {
+    console.log('[DetectionsOverlay] Smart cropping active', { itemBbox });
     // Smart cropping is active - replicate SmartCropImg's exact logic
     const [x, y, w, h] = itemBbox; // normalized [0..1]
     
@@ -64,6 +71,11 @@ export default function DetectionsOverlay({
     // Calculate offset to move bbox center to target center (match SmartCropImg)
     imageOffsetX = targetBboxCenterX - currentBboxCenterX;
     imageOffsetY = targetBboxCenterY - currentBboxCenterY;
+    
+    console.log('[DetectionsOverlay] Smart crop calculations:', { 
+      imageScale, targetBboxCenterX, targetBboxCenterY, 
+      currentBboxCenterX, currentBboxCenterY, imageOffsetX, imageOffsetY 
+    });
   }
 
   return (
