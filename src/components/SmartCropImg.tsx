@@ -41,7 +41,8 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
           width: "100%", 
           height: "100%", 
           objectFit: "contain", 
-          objectPosition: "center" 
+          objectPosition: "center",
+          display: "block"
         });
         return;
       }
@@ -53,18 +54,30 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
       const scale = Math.min(cw / (ow * pad), ch / (oh * pad));
 
-      // Calculate the offset to center the bbox within the container
-      const offsetX = cw / 2 - (x + w/2) * iw * scale;
-      const offsetY = ch / 2 - (y + h/2) * ih * scale;
+      // Calculate the center position for the bbox within the container
+      const scaledImageWidth = iw * scale;
+      const scaledImageHeight = ih * scale;
+      
+      // Center the entire scaled image first
+      const imageLeft = (cw - scaledImageWidth) / 2;
+      const imageTop = (ch - scaledImageHeight) / 2;
+      
+      // Then adjust to center the bbox
+      const bboxCenterX = (x + w/2) * iw * scale;
+      const bboxCenterY = (y + h/2) * ih * scale;
+      
+      const offsetX = imageLeft + (cw / 2 - bboxCenterX);
+      const offsetY = imageTop + (ch / 2 - bboxCenterY);
 
       setStyle({
-        width: iw * scale,
-        height: ih * scale,
+        width: scaledImageWidth,
+        height: scaledImageHeight,
         position: "absolute",
         top: offsetY,
         left: offsetX,
         objectFit: "fill",
-        transformOrigin: "0 0"
+        transformOrigin: "0 0",
+        display: "block"
       });
     }
 
@@ -84,7 +97,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
   }, [bbox, paddingPct]);
 
   return (
-    <div className={`relative overflow-hidden ${className}`}>
+    <div className={`relative overflow-hidden flex items-center justify-center ${className}`}>
       <img
         ref={(el) => {
           localImgRef.current = el;
@@ -98,6 +111,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         alt={alt}
         draggable={false}
         style={style}
+        className="max-w-full max-h-full"
       />
     </div>
   );

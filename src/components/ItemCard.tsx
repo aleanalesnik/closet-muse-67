@@ -102,13 +102,13 @@ export default function ItemCard({
         : 'hover:shadow-lg'
     }`} 
     onClick={isSelectionMode ? onToggleSelection : undefined}>
-      <div ref={containerRef} className="aspect-square relative">
+      <div ref={containerRef} className="aspect-square relative bg-muted/20">
         <SmartCropImg 
           ref={imgRef}
           src={imageUrl}
           bbox={item.bbox as any}
           alt={item.title || 'Closet item'}
-          className="aspect-square rounded-xl"
+          className="w-full h-full rounded-xl"
           paddingPct={0.1}
         />
         
