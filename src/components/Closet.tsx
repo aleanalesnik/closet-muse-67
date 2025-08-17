@@ -10,7 +10,14 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, Loader2, Trash2, X, Square, CheckSquare, Eye, EyeOff } from 'lucide-react';
+import { useIsMobile } from '@/hooks/use-mobile';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Upload, Loader2, Trash2, X, Square, CheckSquare, Eye, EyeOff, MoreVertical } from 'lucide-react';
 
 interface Item {
   id: string;
@@ -97,6 +104,7 @@ export default function Closet({ user }: ClosetProps) {
   const [detections, setDetections] = useState<DetectionsMap>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     loadItems();
@@ -380,68 +388,126 @@ export default function Closet({ user }: ClosetProps) {
   })), ...items.map(i => ({ ...i, isUploading: false }))];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">My Closet</h1>
-          <p className="text-muted-foreground mt-1">{items.length} items in your collection</p>
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
+        <div className="min-w-0">
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground truncate">My Closet</h1>
+          <p className="text-muted-foreground text-sm sm:text-base mt-1">
+            {items.length} item{items.length !== 1 ? 's' : ''} in your collection
+          </p>
         </div>
-        <div className="flex gap-4">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-          {isSelectionMode ? (
-            <div className="flex items-center gap-2">
-              <Button onClick={selectAllItems} disabled={selectedItems.size === items.length} variant="outline" size="sm">
-                Select All
-              </Button>
-              <Button onClick={clearSelection} disabled={selectedItems.size === 0} variant="outline" size="sm">
-                Clear
-              </Button>
-              <Button 
-                onClick={deleteSelectedItems} 
-                disabled={selectedItems.size === 0 || deleting} 
-                variant="destructive" 
-                size="sm"
-                className="flex items-center gap-2"
-              >
-                {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                Delete {selectedItems.size > 0 ? `(${selectedItems.size})` : ''}
-              </Button>
-              <Button onClick={toggleSelectionMode} variant="outline" size="sm">
-                <X className="w-4 h-4" />
-                Cancel
-              </Button>
-            </div>
-          ) : (
-            <>
-              <Button 
-                onClick={toggleDebugDetections} 
-                variant="outline" 
-                size="sm"
-                className="flex items-center gap-2"
-              >
-                {debugDetections ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                Debug: Detections
-              </Button>
-              <Button onClick={toggleSelectionMode} disabled={items.length === 0} variant="outline" className="flex items-center gap-2">
-                <CheckSquare className="w-4 h-4" />
-                Select
-              </Button>
-              <Button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2">
-                <Upload className="w-4 h-4" />
-                Add Item
-              </Button>
-            </>
-          )}
-        </div>
+        
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileUpload}
+          className="hidden"
+        />
+        
+        {/* Mobile Layout */}
+        {isMobile ? (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {isSelectionMode ? (
+              <>
+                <Button onClick={selectAllItems} disabled={selectedItems.size === items.length} variant="outline" size="sm">
+                  All
+                </Button>
+                <Button onClick={clearSelection} disabled={selectedItems.size === 0} variant="outline" size="sm">
+                  Clear
+                </Button>
+                <Button 
+                  onClick={deleteSelectedItems} 
+                  disabled={selectedItems.size === 0 || deleting} 
+                  variant="destructive" 
+                  size="sm"
+                  className="flex items-center gap-1"
+                >
+                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  {selectedItems.size > 0 && `(${selectedItems.size})`}
+                </Button>
+                <Button onClick={toggleSelectionMode} variant="outline" size="sm">
+                  <X className="w-4 h-4" />
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2">
+                  <Upload className="w-4 h-4" />
+                  Add Item
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="px-2">
+                      <MoreVertical className="w-4 h-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem onClick={toggleDebugDetections}>
+                      {debugDetections ? <Eye className="w-4 h-4 mr-2" /> : <EyeOff className="w-4 h-4 mr-2" />}
+                      Debug: Detections
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={toggleSelectionMode} disabled={items.length === 0}>
+                      <CheckSquare className="w-4 h-4 mr-2" />
+                      Select Items
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            )}
+          </div>
+        ) : (
+          /* Desktop Layout */
+          <div className="flex gap-3 flex-shrink-0">
+            {isSelectionMode ? (
+              <div className="flex items-center gap-2">
+                <Button onClick={selectAllItems} disabled={selectedItems.size === items.length} variant="outline" size="sm">
+                  Select All
+                </Button>
+                <Button onClick={clearSelection} disabled={selectedItems.size === 0} variant="outline" size="sm">
+                  Clear
+                </Button>
+                <Button 
+                  onClick={deleteSelectedItems} 
+                  disabled={selectedItems.size === 0 || deleting} 
+                  variant="destructive" 
+                  size="sm"
+                  className="flex items-center gap-2"
+                >
+                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Delete {selectedItems.size > 0 ? `(${selectedItems.size})` : ''}
+                </Button>
+                <Button onClick={toggleSelectionMode} variant="outline" size="sm">
+                  <X className="w-4 h-4" />
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <>
+                <Button 
+                  onClick={toggleDebugDetections} 
+                  variant="outline" 
+                  size="sm"
+                  className="flex items-center gap-2"
+                >
+                  {debugDetections ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                  Debug: Detections
+                </Button>
+                <Button onClick={toggleSelectionMode} disabled={items.length === 0} variant="outline" className="flex items-center gap-2">
+                  <CheckSquare className="w-4 h-4" />
+                  Select
+                </Button>
+                <Button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2">
+                  <Upload className="w-4 h-4" />
+                  Add Item
+                </Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 md:gap-6">
         {allItems.map((item) => {
           const isUploading = 'isUploading' in item && item.isUploading;
           const uploadStatus = isUploading ? (item as any).status : null;

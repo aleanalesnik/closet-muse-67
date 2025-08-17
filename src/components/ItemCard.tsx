@@ -135,21 +135,21 @@ export default function ItemCard({
         )}
       </div>
       
-      <CardContent className="p-4">
-        <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
+      <CardContent className="p-3 sm:p-4">
+        <h3 className="font-medium text-xs sm:text-sm mb-2 line-clamp-2 leading-tight break-words">{item.title || 'Untitled'}</h3>
         <div className="flex flex-wrap gap-1 mb-2">
           {item.category && (
-            <Badge variant="secondary" className="text-xs">
+            <Badge variant="secondary" className="text-xs px-1.5 py-0.5 h-auto leading-none">
               {item.category}
             </Badge>
           )}
           {item.subcategory && (
-            <Badge variant="outline" className="text-xs">
+            <Badge variant="outline" className="text-xs px-1.5 py-0.5 h-auto leading-none">
               {item.subcategory}
             </Badge>
           )}
         </div>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs text-muted-foreground truncate">
           Added {new Date(item.created_at).toLocaleDateString()}
         </div>
       </CardContent>
