@@ -52,19 +52,46 @@ export default function DetectionsOverlay({
     const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
     imageScale = Math.min(cw / (ow * pad), ch / (oh * pad));
     
-    // Calculate the offset to center the bbox within the container (same as SmartCropImg)
-    imageOffsetX = cw / 2 - (x + w/2) * iw * imageScale;
-    imageOffsetY = ch / 2 - (y + h/2) * ih * imageScale;
+    // Calculate the center position for the bbox within the container (match SmartCropImg)
+    const scaledImageWidth = iw * imageScale;
+    const scaledImageHeight = ih * imageScale;
+    
+    // Center the entire scaled image first
+    const imageLeft = (cw - scaledImageWidth) / 2;
+    const imageTop = (ch - scaledImageHeight) / 2;
+    
+    // Then adjust to center the bbox
+    const bboxCenterX = (x + w/2) * iw * imageScale;
+    const bboxCenterY = (y + h/2) * ih * imageScale;
+    
+    imageOffsetX = imageLeft + (cw / 2 - bboxCenterX);
+    imageOffsetY = imageTop + (ch / 2 - bboxCenterY);
   }
 
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
       {preds.map((p, i) => {
+        // Handle both old and new bbox formats for compatibility
+        let boxX, boxY, boxW, boxH;
+        
+        if (p.box && typeof p.box === 'object' && 'xmin' in p.box) {
+          // Old format: {xmin, ymin, xmax, ymax}
+          boxX = p.box.xmin;
+          boxY = p.box.ymin; 
+          boxW = p.box.xmax - p.box.xmin;
+          boxH = p.box.ymax - p.box.ymin;
+        } else if (Array.isArray(p.box) && p.box.length === 4) {
+          // New format: [x, y, width, height]
+          [boxX, boxY, boxW, boxH] = p.box;
+        } else {
+          return null; // Invalid bbox format
+        }
+        
         // Apply the EXACT SAME coordinate transformation as SmartCropImg
-        const w = (p.box.xmax - p.box.xmin) * iw * imageScale;
-        const h = (p.box.ymax - p.box.ymin) * ih * imageScale;
-        const x = p.box.xmin * iw * imageScale + imageOffsetX;
-        const y = p.box.ymin * ih * imageScale + imageOffsetY;
+        const w = boxW * iw * imageScale;
+        const h = boxH * ih * imageScale;
+        const x = boxX * iw * imageScale + imageOffsetX;
+        const y = boxY * ih * imageScale + imageOffsetY;
         const pct = Math.round(p.score * 100);
 
         return (
