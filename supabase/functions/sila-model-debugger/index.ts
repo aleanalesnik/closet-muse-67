@@ -58,7 +58,7 @@ function mapLabelToCategory(label: string): string | null {
   return "Clothing";
 }
 
-function toNormBox(b: any): [number,number,number,number] | null {
+function toNormBox(b: any, imgW?: number, imgH?: number): [number,number,number,number] | null {
   // Accept array or object; return normalized [x1,y1,x2,y2] or null.
   if (!b) return null;
   const arr = Array.isArray(b) ? b : [b.xmin, b.ymin, b.xmax, b.ymax];
@@ -66,40 +66,47 @@ function toNormBox(b: any): [number,number,number,number] | null {
   let [x1, y1, x2, y2] = arr.map(Number);
   if (![x1,y1,x2,y2].every(Number.isFinite)) return null;
 
+  // If values look like pixel coordinates, normalize using image dimensions
+  const pixelVals = Math.max(x1, x2, y1, y2) > 1;
+  if (pixelVals) {
+    if (!imgW || !imgH) return null;
+    x1 /= imgW; x2 /= imgW; y1 /= imgH; y2 /= imgH;
+  }
+
   // Guard against degenerate boxes
   if (x1 === 1 && y1 === 1 && x2 === 1 && y2 === 1) return null;
 
   const clamp = (v:number) => Math.min(1, Math.max(0, v));
-  x1 = clamp(Math.min(x1, x2));
-  y1 = clamp(Math.min(y1, y2));
-  x2 = clamp(Math.max(x1, x2));
-  y2 = clamp(Math.max(y1, y2));
+  const nx1 = clamp(Math.min(x1, x2));
+  const ny1 = clamp(Math.min(y1, y2));
+  const nx2 = clamp(Math.max(x1, x2));
+  const ny2 = clamp(Math.max(y1, y2));
 
-  const w = x2 - x1, h = y2 - y1;
+  const w = nx2 - nx1, h = ny2 - ny1;
   if (w <= 0.01 || h <= 0.01) return null; // ignore tiny boxes
-  return [x1, y1, x2, y2];
+  return [nx1, ny1, nx2, ny2];
 }
 
 function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
   const garmentPreds = preds.filter(p => p && p.score >= minScore && isBox(p.box) && mapLabelToCategory(p.label) !== null);
   if (!garmentPreds.length) return null;
-  
+
   // Sort by confidence first, then by area for tie-breaking
   garmentPreds.sort((a, b) => {
     const scoreDiff = b.score - a.score;
     if (scoreDiff !== 0) return scoreDiff;
-    
+
     const areaA = (a.box.xmax - a.box.xmin) * (a.box.ymax - a.box.ymin);
     const areaB = (b.box.xmax - b.box.xmin) * (b.box.ymax - b.box.ymin);
     return areaB - areaA;
   });
-  
+
   return garmentPreds[0];
 }
 
 async function callCLIP(dataUrl: string): Promise<string> {
   const labels = ["Tops","Bottoms","Outerwear","Dress","Bags","Shoes","Accessories"];
-  
+
   const response = await fetch(`https://api-inference.huggingface.co/models/${HF_CLIP_MODEL}`, {
     method: "POST",
     headers: {
@@ -120,27 +127,27 @@ async function callCLIP(dataUrl: string): Promise<string> {
   }
 
   const result = await response.json();
-  
+
   // CLIP returns {labels: [...], scores: [...]} where first item is highest confidence
   if (result.labels && result.labels.length > 0) {
     return result.labels[0];
   }
-  
+
   return "Clothing"; // fallback
 }
 
 async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
   const prompts = {
     "Bags": ["handbag","tote bag","shoulder bag","crossbody bag","bag","wallet"],
-    "Shoes": ["shoe","sneaker","boot","heel","flat","sandal"], 
+    "Shoes": ["shoe","sneaker","boot","heel","flat","sandal"],
     "Accessories": ["belt","sunglasses","glasses","hat","watch","tie","scarf"]
   };
-  
+
   const labels = prompts[category as keyof typeof prompts];
   if (!labels) return null;
-  
+
   const text = labels.join(" . ");
-  
+
   try {
     const response = await fetch(`https://api-inference.huggingface.co/models/${HF_GDINO_MODEL}`, {
       method: "POST",
@@ -162,7 +169,7 @@ async function callGroundingDINO(dataUrl: string, category: string): Promise<[nu
     }
 
     const result = await response.json();
-    
+
     // Find highest scoring box
     if (result && Array.isArray(result) && result.length > 0) {
       const boxes = result.filter(r => r.box && r.score);
@@ -175,18 +182,50 @@ async function callGroundingDINO(dataUrl: string, category: string): Promise<[nu
   } catch (err) {
     console.log(`[GDINO] Exception: ${err}`);
   }
-  
+
   return null;
 }
 
-async function urlToDataUrl(url: string): Promise<string> {
+function getImageDims(buf: Uint8Array): { width: number; height: number } | null {
+  // PNG: width/height stored at bytes 16-23
+  if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    return { width: dv.getUint32(16), height: dv.getUint32(20) };
+  }
+  // JPEG: scan for SOF markers
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 9 < buf.length) {
+      if (buf[offset] !== 0xff) break;
+      const marker = buf[offset + 1];
+      const size = (buf[offset + 2] << 8) + buf[offset + 3];
+      if (marker === 0xc0 or marker === 0xc2) {
+        const height = (buf[offset + 5] << 8) + buf[offset + 6];
+        const width = (buf[offset + 7] << 8) + buf[offset + 8];
+        return { width, height };
+      }
+      offset += 2 + size;
+    }
+  }
+  return null;
+}
+
+function dataUrlInfo(dataUrl: string): { dataUrl: string; width: number; height: number } {
+  const [, b64] = dataUrl.split(",", 2);
+  const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const dims = getImageDims(buf) ?? { width: 1, height: 1 };
+  return { dataUrl, width: dims.width, height: dims.height };
+}
+
+async function urlToDataUrl(url: string): Promise<{ dataUrl: string; width: number; height: number }> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`fetch image failed: ${r.status} ${r.statusText}`);
   const mime = r.headers.get("content-type")?.split(";")[0] ?? "image/png";
   const buf  = new Uint8Array(await r.arrayBuffer());
+  const dims = getImageDims(buf) ?? { width: 1, height: 1 };
   let binary = "";
   for (let i = 0; i < buf.byteLength; i++) binary += String.fromCharCode(buf[i]);
-  return `data:${mime};base64,${btoa(binary)}`;
+  return { dataUrl: `data:${mime};base64,${btoa(binary)}`, width: dims.width, height: dims.height };
 }
 
 async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
@@ -219,27 +258,28 @@ Deno.serve(async (req) => {
     }
 
     const body = (await req.json()) as ReqBody;
-    let dataUrl: string;
+    let img: { dataUrl: string; width: number; height: number };
     if (body.imageUrl) {
-      dataUrl = await urlToDataUrl(body.imageUrl);
+      img = await urlToDataUrl(body.imageUrl);
     } else if (body.base64Image?.startsWith("data:")) {
-      dataUrl = body.base64Image;
+      img = dataUrlInfo(body.base64Image);
     } else {
       return new Response(JSON.stringify({ status: "fail", error: "No imageUrl or base64Image provided" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
       });
     }
+    const { dataUrl, width: imgW, height: imgH } = img;
 
     const t = typeof body.threshold === "number" ? body.threshold : 0.12;
 
     // 1. YOLOS for bbox detection
     let preds = await callHF(dataUrl, t);
-    
+
     // Lower threshold for small items that are often missed
     const smallItemLabels = new Set(["shoe","bag, wallet","belt","glasses","hat"]);
     const hasSmallItems = preds.some(p => smallItemLabels.has(p.label));
     let primary = pickPrimaryGarment(preds, t);
-    
+
     if (!primary && hasSmallItems) {
       const t2 = Math.max(0.06, t * 0.5);
       const preds2 = await callHF(dataUrl, t2);
@@ -258,14 +298,14 @@ Deno.serve(async (req) => {
     }
 
     // 3. Get bbox from YOLOS
-    let bbox = primary && isBox(primary.box) ? toNormBox(primary.box) : null;
-    
+    let bbox = primary && isBox(primary.box) ? toNormBox(primary.box, imgW, imgH) : null;
+
     // 4. Grounding-DINO fallback for specific categories when no bbox
     if (!bbox && ["Bags", "Shoes", "Accessories"].includes(category)) {
       console.log(`[GDINO] Trying fallback for ${category}`);
       const fallbackBox = await callGroundingDINO(dataUrl, category);
       if (fallbackBox) {
-        bbox = toNormBox(fallbackBox);
+        bbox = toNormBox(fallbackBox, imgW, imgH);
         console.log(`[GDINO] Found bbox: ${JSON.stringify(bbox)}`);
       }
     }
@@ -276,7 +316,7 @@ Deno.serve(async (req) => {
       .sort((a,b) => b.score - a.score)
       .slice(0, 8)
       .map((p, i) => {
-        const box = toNormBox(p.box);
+        const box = toNormBox(p.box, imgW, imgH);
         console.log(`[DEBUG] Detection ${i}: label="${p.label}", score=${p.score}, box=${JSON.stringify(p.box)} -> ${box ? JSON.stringify(box) : 'FILTERED OUT'}`);
         return {
           score: Math.round(p.score * 1000) / 1000,
@@ -284,7 +324,7 @@ Deno.serve(async (req) => {
           box
         };
       });
-    
+
     const trimmed = sanitized.filter(p => p.box !== null);
     console.log('[DEBUG] After sanitization:', sanitized.length, 'processed,', trimmed.length, 'kept');
 
@@ -296,7 +336,7 @@ Deno.serve(async (req) => {
       proposedTitle: category,
       colorName: null,
       colorHex: null,
-      yolosTopLabels: trimmed.slice(0,3).map(d => d.label),
+      yolosTopLabels: sanitized.slice(0,3).map(d => d.label),
       result: trimmed,
       latencyMs,
       model: "valentinafeve/yolos-fashionpedia"
