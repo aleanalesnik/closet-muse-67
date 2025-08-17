@@ -97,7 +97,8 @@ function toNormBox(b: any, imgW?: number, imgH?: number): [number,number,number,
 
   const w = nx2 - nx1, h = ny2 - ny1;
   if (w <= 0.01 || h <= 0.01) return null;
-  return [nx1, ny1, nx2, ny2];
+  // Return [x, y, width, height] format expected by SmartCropImg
+  return [nx1, ny1, w, h];
 }
 
 function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
