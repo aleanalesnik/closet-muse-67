@@ -46,30 +46,28 @@ export default function DetectionsOverlay({
   } else {
     // Smart cropping is active - replicate SmartCropImg's exact logic
     const [x, y, w, h] = itemBbox; // normalized [0..1]
-    const ow = w * iw;
-    const oh = h * ih;
     
+    // Calculate scale to fit the bbox with padding in the container (match SmartCropImg)
     const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
-    imageScale = Math.min(cw / (ow * pad), ch / (oh * pad));
+    const bboxPixelW = w * iw;
+    const bboxPixelH = h * ih;
+    imageScale = Math.min(cw / (bboxPixelW * pad), ch / (bboxPixelH * pad));
+
+    // Calculate where the bbox center should be (center of container)
+    const targetBboxCenterX = cw / 2;
+    const targetBboxCenterY = ch / 2;
     
-    // Calculate the center position for the bbox within the container (match SmartCropImg)
-    const scaledImageWidth = iw * imageScale;
-    const scaledImageHeight = ih * imageScale;
+    // Calculate where the bbox center currently is in the scaled image  
+    const currentBboxCenterX = (x + w/2) * iw * imageScale;
+    const currentBboxCenterY = (y + h/2) * ih * imageScale;
     
-    // Center the entire scaled image first
-    const imageLeft = (cw - scaledImageWidth) / 2;
-    const imageTop = (ch - scaledImageHeight) / 2;
-    
-    // Then adjust to center the bbox
-    const bboxCenterX = (x + w/2) * iw * imageScale;
-    const bboxCenterY = (y + h/2) * ih * imageScale;
-    
-    imageOffsetX = imageLeft + (cw / 2 - bboxCenterX);
-    imageOffsetY = imageTop + (ch / 2 - bboxCenterY);
+    // Calculate offset to move bbox center to target center (match SmartCropImg)
+    imageOffsetX = targetBboxCenterX - currentBboxCenterX;
+    imageOffsetY = targetBboxCenterY - currentBboxCenterY;
   }
 
   return (
-    <div className="absolute inset-0 pointer-events-none z-10">
+    <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">{/* Add overflow-hidden to clip overlays */}
       {preds.map((p, i) => {
         // Handle both old and new bbox formats for compatibility
         let boxX, boxY, boxW, boxH;

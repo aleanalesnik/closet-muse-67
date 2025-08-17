@@ -48,26 +48,28 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       }
 
       const [x, y, w, h] = bbox; // normalized [0..1]
-      const ow = w * iw;
-      const oh = h * ih;
-
+      
+      // Calculate scale to fit the bbox with padding in the container
       const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
-      const scale = Math.min(cw / (ow * pad), ch / (oh * pad));
+      const bboxPixelW = w * iw;
+      const bboxPixelH = h * ih;
+      const scale = Math.min(cw / (bboxPixelW * pad), ch / (bboxPixelH * pad));
 
-      // Calculate the center position for the bbox within the container
+      // Scale the entire image
       const scaledImageWidth = iw * scale;
       const scaledImageHeight = ih * scale;
       
-      // Center the entire scaled image first
-      const imageLeft = (cw - scaledImageWidth) / 2;
-      const imageTop = (ch - scaledImageHeight) / 2;
+      // Calculate where the bbox center should be (center of container)
+      const targetBboxCenterX = cw / 2;
+      const targetBboxCenterY = ch / 2;
       
-      // Then adjust to center the bbox
-      const bboxCenterX = (x + w/2) * iw * scale;
-      const bboxCenterY = (y + h/2) * ih * scale;
+      // Calculate where the bbox center currently is in the scaled image
+      const currentBboxCenterX = (x + w/2) * iw * scale;
+      const currentBboxCenterY = (y + h/2) * ih * scale;
       
-      const offsetX = imageLeft + (cw / 2 - bboxCenterX);
-      const offsetY = imageTop + (ch / 2 - bboxCenterY);
+      // Calculate offset to move bbox center to target center
+      const offsetX = targetBboxCenterX - currentBboxCenterX;
+      const offsetY = targetBboxCenterY - currentBboxCenterY;
 
       setStyle({
         width: scaledImageWidth,

@@ -102,8 +102,8 @@ export default function ItemCard({
         : 'hover:shadow-lg'
     }`} 
     onClick={isSelectionMode ? onToggleSelection : undefined}>
-      <div ref={containerRef} className="aspect-square relative bg-muted/20">
-        <SmartCropImg 
+      <div ref={containerRef} className="aspect-square relative bg-muted/20 overflow-hidden rounded-xl">
+        <SmartCropImg
           ref={imgRef}
           src={imageUrl}
           bbox={item.bbox as any}
