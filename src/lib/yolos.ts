@@ -8,7 +8,7 @@ export type TrimDet = { score: number; label: string; box: NormBbox | null };
 export type EdgeResponse = {
   status: "success";
   category: string;                 // e.g., "Tops", "Bottoms", "Bags", etc.
-  bbox: NormBbox | null;            // normalized [x1,y1,x2,y2] or null
+  bbox: NormBbox | null;            // normalized [x,y,w,h] or null
   proposedTitle: string;            // e.g., "Bags", "Dress" 
   colorName: null;                  // always null from edge
   colorHex: null;                   // always null from edge
@@ -37,7 +37,14 @@ export function normalizeBbox(b: any): NormBbox | null {
   const nx2 = clamp(Math.max(x1, x2));
   const ny2 = clamp(Math.max(y1, y2));
   if (nx2 - nx1 < 0.001 || ny2 - ny1 < 0.001) return null;
-  return [nx1, ny1, nx2, ny2];
+  
+  // Convert from [x₁, y₁, x₂, y₂] to [x, y, width, height] format for SmartCropImg
+  const x = nx1;
+  const y = ny1;
+  const w = nx2 - nx1;
+  const h = ny2 - ny1;
+  
+  return [x, y, w, h];
 }
 
 function singularizeCategory(k: string): string {
@@ -91,7 +98,7 @@ export async function analyzeImage(publicUrl: string) {
     subcategory: null,              // Keep null until user chooses
     color_name: colorName,          // snapped or null
     color_hex:  colorHex,           // snapped or null
-    bbox: edge.bbox,                // normalized [x1,y1,x2,y2] or null
+    bbox: edge.bbox,                // normalized [x,y,w,h] or null
     yolos_result: edge.result,      // trimmed array (for Debug overlay)
     yolos_top_labels: edge.yolosTopLabels,
     yolos_model: edge.model,

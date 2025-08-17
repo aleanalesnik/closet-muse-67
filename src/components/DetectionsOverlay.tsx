@@ -111,8 +111,9 @@ export default function DetectionsOverlay({
             style={{ left: x, top: y, width: w, height: h }}
           >
             <div className="absolute inset-0 rounded-md border-2 border-white/90 shadow-[0_0_0_2px_rgba(99,102,241,0.75)]" />
-            <div className="absolute -top-7 left-0 px-2 py-0.5 rounded-md 
-                            bg-violet-600 text-white text-xs font-medium shadow whitespace-nowrap">
+            <div className="absolute bottom-full left-0 mb-1 px-2 py-0.5 rounded-md 
+                            bg-violet-600 text-white text-xs font-medium shadow whitespace-nowrap
+                            max-w-[120px] truncate">
               {p.label} {pct}%
             </div>
           </div>
