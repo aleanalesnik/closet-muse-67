@@ -1,13 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
 import SmartCropImg from './SmartCropImg';
-import DetectionsOverlay from './DetectionsOverlay';
 import { Badge } from './ui/badge';
 import { Card, CardContent } from './ui/card';
 import { Square, CheckSquare } from 'lucide-react';
 
-type YolosBox = { xmin: number; ymin: number; xmax: number; ymax: number };
-type YolosPred = { label: string; score: number; box: YolosBox };
 
 interface ItemCardProps {
   item: {
@@ -24,8 +21,6 @@ interface ItemCardProps {
   isSelectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelection?: () => void;
-  debugDetections?: boolean;
-  detectionPreds?: YolosPred[];
 }
 
 export default function ItemCard({ 
@@ -33,63 +28,9 @@ export default function ItemCard({
   imageUrl, 
   isSelectionMode, 
   isSelected, 
-  onToggleSelection,
-  debugDetections,
-  detectionPreds
+  onToggleSelection
 }: ItemCardProps) {
-  const imgRef = useRef<HTMLImageElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({
-    naturalWidth: 0,
-    naturalHeight: 0,
-    renderedWidth: 0,
-    renderedHeight: 0
-  });
-
-  useEffect(() => {
-    const img = imgRef.current;
-    const container = containerRef.current;
-    if (!img || !container) {
-      return;
-    }
-
-    const updateDimensions = () => {
-      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-        setDimensions({
-          naturalWidth: img.naturalWidth,
-          naturalHeight: img.naturalHeight,
-          renderedWidth: container.clientWidth,
-          renderedHeight: container.clientHeight
-        });
-      }
-    };
-
-    const handleLoad = () => {
-      // Add a small delay to ensure container has rendered
-      setTimeout(updateDimensions, 50);
-    };
-    
-    const handleResize = () => updateDimensions();
-    
-    img.addEventListener('load', handleLoad);
-    window.addEventListener('resize', handleResize);
-    
-    if (img.complete && img.naturalWidth > 0) {
-      handleLoad();
-    }
-    
-    return () => {
-      img.removeEventListener('load', handleLoad);
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [imageUrl, item.id]);
-
   const isUploading = item.isUploading;
-  // Only show overlay when explicitly requested (debug mode) or during upload
-  // For completed items, only show when debug mode is on
-  const showOverlay = detectionPreds && detectionPreds.length > 0 && (
-    debugDetections || (isUploading && item.status === 'analyzing')
-  );
   
   
   
@@ -102,27 +43,14 @@ export default function ItemCard({
         : 'hover:shadow-lg'
     }`} 
     onClick={isSelectionMode ? onToggleSelection : undefined}>
-      <div ref={containerRef} className="aspect-square relative bg-muted/20 overflow-hidden rounded-xl">
+      <div className="aspect-square relative bg-muted/20 overflow-hidden rounded-xl">
         <SmartCropImg
-          ref={imgRef}
           src={imageUrl}
           bbox={item.bbox as any}
           alt={item.title || 'Closet item'}
           className="w-full h-full rounded-xl"
           paddingPct={0.1}
         />
-        
-        {showOverlay && (
-          <DetectionsOverlay
-            preds={detectionPreds}
-            naturalWidth={dimensions.naturalWidth}
-            naturalHeight={dimensions.naturalHeight}
-            renderedWidth={dimensions.renderedWidth}
-            renderedHeight={dimensions.renderedHeight}
-            itemBbox={item.bbox}
-            paddingPct={0.1}
-          />
-        )}
         
         {isSelectionMode && (
           <div className="absolute top-2 right-2 bg-background/80 rounded-full p-1">

@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { PALETTE } from "@/utils/color";
 import SmartCropImg from "@/components/SmartCropImg";
-import DetectionsOverlay from "@/components/DetectionsOverlay";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -44,37 +43,6 @@ type ItemRow = {
   yolos_top_labels?: string[] | null;
 };
 
-// Debug types
-type YolosBox = { xmin: number; ymin: number; xmax: number; ymax: number };
-type YolosPred = { label: string; score: number; box: YolosBox };
-
-type RawDet = { box?: unknown; score?: unknown; label?: unknown };
-
-function resultToDetections(result: unknown[]): YolosPred[] {
-  if (!Array.isArray(result)) return [];
-
-  return (result as RawDet[])
-    .filter(
-      (p): p is { box: unknown; score: number; label: unknown } =>
-        typeof p.score === "number" &&
-        p.box !== undefined &&
-        p.label !== undefined,
-    )
-    .map((p) => {
-      let box: YolosBox;
-      if (Array.isArray(p.box) && p.box.length === 4) {
-        const [x1, y1, x2, y2] = p.box as number[];
-        box = { xmin: x1, ymin: y1, xmax: x2, ymax: y2 };
-      } else {
-        box = p.box as YolosBox;
-      }
-      return {
-        label: String(p.label),
-        score: p.score,
-        box,
-      };
-    });
-}
 
 const CATEGORY_OPTIONS = [
   "accessory",
@@ -121,17 +89,8 @@ export default function ItemDetailPage() {
 
   const [item, setItem] = useState<ItemRow | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [debugDetections, setDebugDetections] = useState(false);
-  const imgRef = useRef<HTMLImageElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({
-    naturalWidth: 0,
-    naturalHeight: 0,
-    renderedWidth: 0,
-    renderedHeight: 0,
-  });
 
   // form state
   const [title, setTitle] = useState("");
@@ -146,16 +105,8 @@ const [saving, setSaving] = useState(false);
     return SUBCATS[key] ?? [];
   }, [category]);
 
-  const detectionPreds = useMemo(
-    () => (item?.yolos_result ? resultToDetections(item.yolos_result) : []),
-    [item],
-  );
 
   useEffect(() => {
-    // Load debug toggle
-    const saved = localStorage.getItem("sila.debugDetections");
-    if (saved === "true") setDebugDetections(true);
-
     (async () => {
       // load item
       const {
@@ -198,34 +149,6 @@ const [saving, setSaving] = useState(false);
     })();
   }, [id]);
 
-  // Update image dimensions for overlay
-  useEffect(() => {
-    const img = imgRef.current;
-    const container = containerRef.current;
-    if (!img || !container) return;
-
-    const updateDimensions = () => {
-      setDimensions({
-        naturalWidth: img.naturalWidth,
-        naturalHeight: img.naturalHeight,
-        renderedWidth: container.clientWidth,
-        renderedHeight: container.clientHeight,
-      });
-    };
-
-    const handleLoad = () => updateDimensions();
-    const handleResize = () => updateDimensions();
-
-    img.addEventListener("load", handleLoad);
-    window.addEventListener("resize", handleResize);
-
-    if (img.complete) handleLoad();
-
-    return () => {
-      img.removeEventListener("load", handleLoad);
-      window.removeEventListener("resize", handleResize);
-    };
-  }, [imageUrl]);
 
   // if user picks a color swatch
   function pickColor(name: string, hex: string) {
@@ -322,25 +245,13 @@ const [saving, setSaving] = useState(false);
           style={{ aspectRatio: "4/3" }}
         >
           {imageUrl ? (
-            <div ref={containerRef} className="relative w-full h-full">
-              <SmartCropImg
-                ref={imgRef}
-                src={imageUrl}
-                bbox={item.bbox as any}
-                alt={title || "item"}
-                className="aspect-[4/3] rounded-2xl"
-                paddingPct={0.1}
-              />
-              {debugDetections && (
-                <DetectionsOverlay
-                  preds={detectionPreds}
-                  naturalWidth={dimensions.naturalWidth}
-                  naturalHeight={dimensions.naturalHeight}
-                  renderedWidth={dimensions.renderedWidth}
-                  renderedHeight={dimensions.renderedHeight}
-                />
-              )}
-            </div>
+            <SmartCropImg
+              src={imageUrl}
+              bbox={item.bbox as any}
+              alt={title || "item"}
+              className="aspect-[4/3] rounded-2xl"
+              paddingPct={0.1}
+            />
           ) : (
             <div className="text-sm text-muted-foreground">No image</div>
           )}

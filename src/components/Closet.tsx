@@ -4,7 +4,6 @@ import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
 import { waitUntilPublic, analyzeImage } from '@/lib/yolos';
 import SmartCropImg from '@/components/SmartCropImg';
-import DetectionsOverlay from '@/components/DetectionsOverlay';
 import ItemCard from '@/components/ItemCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Upload, Loader2, Trash2, X, Square, CheckSquare, Eye, EyeOff, MoreVertical } from 'lucide-react';
+import { Upload, Loader2, Trash2, X, Square, CheckSquare, MoreVertical } from 'lucide-react';
 
 interface Item {
   id: string;
@@ -45,10 +44,6 @@ interface ClosetProps {
   user: any;
 }
 
-// Types for YOLOS detections
-type YolosBox = { xmin: number; ymin: number; xmax: number; ymax: number };
-type YolosPred = { label: string; score: number; box: YolosBox };
-type DetectionsMap = Map<string, YolosPred[]>;
 
 // Helper to convert bbox to number array for persistence
 function asBboxArray(b: any): number[] | null {
@@ -67,31 +62,6 @@ function asBboxArray(b: any): number[] | null {
   return null;
 }
 
-// Helper to convert yolos result to detections for overlay
-function resultToDetections(result: any[]): YolosPred[] {
-  if (!Array.isArray(result)) return [];
-  
-  return result
-    .filter((p: any) => p?.box && typeof p?.score === 'number' && p?.label)
-    .map((p: any) => {
-      // Edge function returns sanitized boxes as [x1,y1,x2,y2] arrays
-      // Convert to {xmin,ymin,xmax,ymax} format for DetectionsOverlay
-      let box;
-      if (Array.isArray(p.box) && p.box.length === 4) {
-        const [x1, y1, x2, y2] = p.box;
-        box = { xmin: x1, ymin: y1, xmax: x2, ymax: y2 };
-      } else {
-        // Already in object format (shouldn't happen with new edge function)
-        box = p.box;
-      }
-      
-      return {
-        label: String(p.label), 
-        score: Number(p.score), 
-        box
-      };
-    });
-}
 
 export default function Closet({ user }: ClosetProps) {
   const [items, setItems] = useState<Item[]>([]);
@@ -100,32 +70,13 @@ export default function Closet({ user }: ClosetProps) {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
-  const [debugDetections, setDebugDetections] = useState(false);
-  const [detections, setDetections] = useState<DetectionsMap>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const isMobile = useIsMobile();
 
   useEffect(() => {
     loadItems();
-    // Load debug toggle from localStorage
-    const saved = localStorage.getItem('sila.debugDetections');
-    if (saved === 'true') setDebugDetections(true);
   }, []);
-
-  const setItemDetections = (itemId: string, preds: YolosPred[]) => {
-    setDetections(prev => {
-      const next = new Map(prev);
-      next.set(itemId, preds);
-      return next;
-    });
-  };
-
-  const toggleDebugDetections = () => {
-    const newState = !debugDetections;
-    setDebugDetections(newState);
-    localStorage.setItem('sila.debugDetections', newState ? 'true' : 'false');
-  };
 
   const loadItems = async () => {
     try {
@@ -138,17 +89,6 @@ export default function Closet({ user }: ClosetProps) {
       const itemsData = data || [];
       setItems(itemsData);
 
-      // Load detections for existing items
-      const newDetections = new Map<string, YolosPred[]>();
-      itemsData.forEach(item => {
-        if (item.yolos_result && Array.isArray(item.yolos_result)) {
-          const preds = resultToDetections(item.yolos_result);
-          if (preds.length > 0) {
-            newDetections.set(item.id, preds);
-          }
-        }
-      });
-      setDetections(newDetections);
 
       const imagePaths = itemsData.map(item => item.image_path).filter(Boolean);
       if (imagePaths.length > 0) {
@@ -244,12 +184,6 @@ export default function Closet({ user }: ClosetProps) {
       console.info('[YOLOS] analyzing image with new API');
       const analysis = await analyzeImage(publicUrl);
       console.info('[YOLOS] analysis result', analysis);
-      
-      // Store detections in memory for overlay
-      if (analysis.yolos_result) {
-        const preds = resultToDetections(analysis.yolos_result);
-        setItemDetections(itemId, preds);
-      }
       
       // Analysis result is ready to persist
       const updatePayload = {
@@ -443,10 +377,6 @@ export default function Closet({ user }: ClosetProps) {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem onClick={toggleDebugDetections}>
-                      {debugDetections ? <Eye className="w-4 h-4 mr-2" /> : <EyeOff className="w-4 h-4 mr-2" />}
-                      Debug: Detections
-                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={toggleSelectionMode} disabled={items.length === 0}>
                       <CheckSquare className="w-4 h-4 mr-2" />
                       Select Items
@@ -484,15 +414,6 @@ export default function Closet({ user }: ClosetProps) {
               </div>
             ) : (
               <>
-                <Button 
-                  onClick={toggleDebugDetections} 
-                  variant="outline" 
-                  size="sm"
-                  className="flex items-center gap-2"
-                >
-                  {debugDetections ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                  Debug: Detections
-                </Button>
                 <Button onClick={toggleSelectionMode} disabled={items.length === 0} variant="outline" className="flex items-center gap-2">
                   <CheckSquare className="w-4 h-4" />
                   Select
@@ -540,8 +461,6 @@ export default function Closet({ user }: ClosetProps) {
                   isSelectionMode={isSelectionMode}
                   isSelected={selectedItems.has(item.id)}
                   onToggleSelection={() => toggleItemSelection(item.id)}
-                  debugDetections={debugDetections}
-                  detectionPreds={detections.get(item.id)}
                 />
               )}
             </div>
