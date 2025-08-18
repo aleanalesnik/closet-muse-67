@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { PALETTE } from "@/utils/color";
+import SmartCropImg from "@/components/SmartCropImg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -244,10 +245,12 @@ export default function ItemDetailPage() {
           style={{ aspectRatio: "4/3" }}
         >
           {imageUrl ? (
-            <img
+            <SmartCropImg
               src={imageUrl}
+              bbox={item.bbox as any}
               alt={title || "item"}
-              className="w-full h-full object-cover rounded-2xl"
+              className="w-full h-full rounded-2xl"
+              paddingPct={0.1}
             />
           ) : (
             <div className="text-sm text-muted-foreground">No image</div>
