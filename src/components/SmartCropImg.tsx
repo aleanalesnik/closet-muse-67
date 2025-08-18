@@ -10,9 +10,10 @@ type Props = {
 
 function toXYWH(b?: number[] | null): number[] | null {
   if (!b || b.length !== 4) return null;
-  const [x1,y1,x2,y2] = b;
-  if (x2 > x1 && y2 > y1 && x2 <= 1 && y2 <= 1) return [x1, y1, x2 - x1, y2 - y1];
-  return b; // assume xywh
+  const [a,b1,c,d] = b;
+  // looks like xyxy if c>a & d>b1 and all ≤1
+  if (c > a && d > b1 && c <= 1 && d <= 1) return [a, b1, c - a, d - b1];
+  return b; // assume already [x,y,w,h]
 }
 
 const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({ 
@@ -48,8 +49,8 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         return;
       }
 
-      const safeBox = toXYWH(bbox as any);
-      if (!safeBox) {
+      const safe = toXYWH(bbox as any);
+      if (!safe) {
         // Fallback: non-distorting contain
         setStyle({
           width: "100%",
@@ -61,7 +62,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         return;
       }
 
-      const [x, y, w, h] = safeBox;
+      const [x, y, w, h] = safe;
       
       // Calculate scale to fit the bbox with padding in the container
       const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
