@@ -29,7 +29,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     if (!img) return;
 
     function apply() {
-      console.log('[SmartCropImg] apply() called', { bbox, src });
+      console.log('[SmartCropImg] ==> apply() called', { bbox, src: src.substring(0, 50) + '...' });
       const container = img.parentElement!;
       const cw = container.clientWidth;
       const ch = container.clientHeight;
@@ -38,7 +38,15 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       const ih = img.naturalHeight || 0;
 
       if (!bbox || !Array.isArray(bbox) || bbox.length !== 4 || iw === 0 || ih === 0) {
-        console.log('[SmartCropImg] Using fallback - no valid bbox', { bbox, iw, ih });
+        console.log('[SmartCropImg] ==> Using fallback - no valid bbox', { 
+          bbox, 
+          bboxIsArray: Array.isArray(bbox), 
+          bboxLength: bbox?.length,
+          iw, 
+          ih,
+          hasValidBbox: bbox && Array.isArray(bbox) && bbox.length === 4,
+          hasValidDimensions: iw > 0 && ih > 0
+        });
         setStyle({ 
           width: "100%", 
           height: "100%", 
@@ -50,7 +58,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       }
 
       const [x, y, w, h] = bbox; // normalized [0..1]
-      console.log('[SmartCropImg] Processing bbox:', { x, y, w, h, iw, ih, cw, ch });
+      console.log('[SmartCropImg] ==> Processing bbox:', { x, y, w, h, iw, ih, cw, ch });
       
       // Calculate scale to fit the bbox with padding in the container
       const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
@@ -74,11 +82,22 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       const offsetX = targetBboxCenterX - currentBboxCenterX;
       const offsetY = targetBboxCenterY - currentBboxCenterY;
 
-      console.log('[SmartCropImg] Final calculations:', { 
-        scale, scaledImageWidth, scaledImageHeight, 
-        targetBboxCenterX, targetBboxCenterY, 
-        currentBboxCenterX, currentBboxCenterY,
-        offsetX, offsetY 
+      console.log('[SmartCropImg] ==> Final calculations:', { 
+        scale, 
+        scaledImageWidth, 
+        scaledImageHeight, 
+        targetBboxCenterX, 
+        targetBboxCenterY, 
+        currentBboxCenterX, 
+        currentBboxCenterY,
+        offsetX, 
+        offsetY,
+        finalStyle: {
+          width: scaledImageWidth,
+          height: scaledImageHeight,
+          top: offsetY,
+          left: offsetX
+        }
       });
 
       setStyle({
