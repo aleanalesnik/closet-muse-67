@@ -31,28 +31,32 @@ export function normalizeBbox(b: any): NormBbox | null {
   if (!b) return null;
   const clamp = (v: number) => Math.min(1, Math.max(0, Number(v)));
 
-  // Accept array or legacy object
+  // accept array or legacy object
   let arr: number[] | null = null;
   if (Array.isArray(b) && b.length === 4) {
     arr = b.map(clamp);
   } else if (typeof b === "object") {
-    const maybe = [b.xmin, b.ymin, b.xmax, b.ymax].map(clamp);
-    if (maybe.every((n) => Number.isFinite(n))) arr = maybe;
+    // legacy {xmin, ymin, xmax, ymax}
+    const maybe = [b.xmin, b.ymin, b.xmax, b.ymax].map((n: any) => Number(n));
+    if (maybe.every((n) => Number.isFinite(n))) arr = maybe.map(clamp);
   }
   if (!arr) return null;
+
   let [a, b1, c, d] = arr;
 
-  // If it looks like [x1,y1,x2,y2], convert to [x,y,w,h]
-  if (c > a && d > b1) {
+  // Prefer XYWH if it passes the physical constraints
+  const looksXYWH = c > 0 && d > 0 && a + c <= 1 && b1 + d <= 1;
+  if (looksXYWH) return [a, b1, c, d];
+
+  // Otherwise treat as XYXY if valid
+  const looksXYXY = c > a && d > b1 && c <= 1 && d <= 1;
+  if (looksXYXY) {
     const w = Math.min(1, c - a);
     const h = Math.min(1, d - b1);
-    if (w <= 0 || h <= 0) return null;
-    return [a, b1, w, h];
+    if (w > 0 && h > 0) return [a, b1, w, h];
   }
 
-  // Already [x,y,w,h]
-  if (c <= 0 || d <= 0) return null;
-  return [a, b1, c, d];
+  return null;
 }
 
 function singularizeCategory(k: string): string {

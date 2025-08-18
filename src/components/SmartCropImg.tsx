@@ -11,21 +11,23 @@ type Props = {
 // Accept either [x,y,w,h] or [x1,y1,x2,y2] (all normalized 0..1) and return [x,y,w,h]
 function toXYWH(b?: number[] | null): [number, number, number, number] | null {
   if (!b || !Array.isArray(b) || b.length !== 4) return null;
-  let [a, b1, c, d] = b.map(Number);
-  const clamp = (v: number) => Math.min(1, Math.max(0, v));
-  a = clamp(a); b1 = clamp(b1); c = clamp(c); d = clamp(d);
 
-  // If c>a and d>b1, this looks like [x1,y1,x2,y2] -> convert
-  if (c > a && d > b1) {
+  const clamp = (v: number) => Math.min(1, Math.max(0, Number(v)));
+  let [a, b1, c, d] = b.map(clamp);
+
+  // 1) Looks like XYWH if x+w<=1 and y+h<=1 and w>0 & h>0
+  const looksXYWH = c > 0 && d > 0 && a + c <= 1 && b1 + d <= 1;
+  if (looksXYWH) return [a, b1, c, d];
+
+  // 2) Otherwise, try XYXY if x2>x1 & y2>y1 & within bounds
+  const looksXYXY = c > a && d > b1 && c <= 1 && d <= 1;
+  if (looksXYXY) {
     const w = clamp(c - a);
     const h = clamp(d - b1);
-    if (w <= 0 || h <= 0) return null;
-    return [a, b1, w, h];
+    if (w > 0 && h > 0) return [a, b1, w, h];
   }
 
-  // Already [x,y,w,h]
-  if (c <= 0 || d <= 0) return null;
-  return [a, b1, c, d];
+  return null;
 }
 
 const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({ 
