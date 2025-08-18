@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import SmartCropImg from '@/components/SmartCropImg';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -171,11 +170,10 @@ export default function OutfitBuilder({ user }: OutfitBuilderProps) {
                   {selectedItems.map((item) => (
                     <div key={item.id} className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted">
-                        <SmartCropImg
+                        <img
                           src={getImageUrl(item.image_path)}
-                          bbox={item.bbox as any}
                           alt={item.title || 'Item'}
-                          className="w-full h-full rounded-lg"
+                          className="w-full h-full object-cover rounded-lg"
                         />
                       </div>
                       <div className="flex-1 min-w-0">
@@ -242,11 +240,10 @@ export default function OutfitBuilder({ user }: OutfitBuilderProps) {
                     >
                       <CardContent className="p-0">
                         <div className="aspect-square relative overflow-hidden rounded-t-lg bg-muted">
-                          <SmartCropImg
+                          <img
                             src={getImageUrl(item.image_path)}
-                            bbox={item.bbox as any}
                             alt={item.title || 'Item'}
-                            className="w-full h-full rounded-t-lg"
+                            className="w-full h-full object-cover rounded-t-lg"
                           />
                           {isSelected && (
                             <div className="absolute top-2 right-2 w-6 h-6 bg-primary rounded-full flex items-center justify-center">

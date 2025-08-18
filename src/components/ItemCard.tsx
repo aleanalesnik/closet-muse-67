@@ -1,6 +1,5 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import SmartCropImg from './SmartCropImg';
 import { Badge } from './ui/badge';
 import { Card, CardContent } from './ui/card';
 import { Square, CheckSquare } from 'lucide-react';
@@ -44,12 +43,10 @@ export default function ItemCard({
     }`} 
     onClick={isSelectionMode ? onToggleSelection : undefined}>
       <div className="aspect-square relative bg-muted/20 overflow-hidden rounded-xl">
-        <SmartCropImg
+        <img
           src={imageUrl}
-          bbox={item.bbox as any}
           alt={item.title || 'Closet item'}
-          className="w-full h-full rounded-xl"
-          paddingPct={0.1}
+          className="w-full h-full object-cover rounded-xl"
         />
         
         {isSelectionMode && (
