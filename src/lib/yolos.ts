@@ -8,8 +8,8 @@ export type TrimDet = { score: number; label: string; box: NormBbox | null };
 export type EdgeResponse = {
   status: "success";
   category: string;                 // e.g., "Tops", "Bottoms", "Bags", etc.
-  bbox: NormBbox | null;            // normalized [x,y,w,h] or null
-  proposedTitle: string;            // e.g., "Bags", "Dress" 
+  bbox: NormBbox | null;            // normalized [x1,y1,x2,y2] or null
+  proposedTitle: string;            // e.g., "Bags", "Dress"
   colorName: null;                  // always null from edge
   colorHex: null;                   // always null from edge
   yolosTopLabels: string[];         // for debug
@@ -20,37 +20,30 @@ export type EdgeResponse = {
 
 export async function waitUntilPublic(url: string) {
   for (let i = 0; i < 6; i++) {
-    const r = await fetch(url, { method: 'HEAD', cache: 'no-store' }).catch(() => null);
+    const r = await fetch(url, { method: "HEAD", cache: "no-store" }).catch(() => null);
     if (r?.ok) return;
-    await new Promise(res => setTimeout(res, 250 * Math.pow(2, i))); // 250ms → 8s
+    await new Promise((res) => setTimeout(res, 250 * Math.pow(2, i))); // 250ms → 8s
   }
-  throw new Error('Public URL never became readable');
+  throw new Error("Public URL never became readable");
 }
 
 export function normalizeBbox(b: any): NormBbox | null {
   if (!Array.isArray(b) || b.length !== 4) return null;
-  const [x1,y1,x2,y2] = b.map((v:any) => Number(v));
-  if (![x1,y1,x2,y2].every(Number.isFinite)) return null;
-  const clamp = (v:number) => Math.min(1, Math.max(0, v));
+  const [x1, y1, x2, y2] = b.map((v: any) => Number(v));
+  if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
   const nx1 = clamp(Math.min(x1, x2));
   const ny1 = clamp(Math.min(y1, y2));
   const nx2 = clamp(Math.max(x1, x2));
   const ny2 = clamp(Math.max(y1, y2));
   if (nx2 - nx1 < 0.001 || ny2 - ny1 < 0.001) return null;
-  
-  // Convert from [x₁, y₁, x₂, y₂] to [x, y, width, height] format for SmartCropImg
-  const x = nx1;
-  const y = ny1;
-  const w = nx2 - nx1;
-  const h = ny2 - ny1;
-  
-  return [x, y, w, h];
+  return [nx1, ny1, nx2, ny2];
 }
 
 function singularizeCategory(k: string): string {
   const s = k.toLowerCase();
   if (s === "bottoms") return "bottom";
-  if (s === "tops")    return "top";
+  if (s === "tops") return "top";
   return k.toLowerCase();
 }
 
@@ -81,25 +74,32 @@ export async function analyzeImage(publicUrl: string) {
   const rgb = await getDominantColor(publicUrl).catch(() => null);
   const snapped = rgb ? snapToPalette(rgb) : null;
 
-  const category = edge.category;                // Trust category from edge (CLIP-based)
+  const category = edge.category; // Trust category from edge (CLIP-based)
   const categorySingular = singularizeCategory(category);
   const colorName = snapped?.name ?? null;
-  const colorHex  = snapped?.hex ?? null;
+  const colorHex = snapped?.hex ?? null;
 
   // Start with proposedTitle from edge, update with color when available
-  const title = colorName
-    ? `${colorName} ${categorySingular}`
-    : edge.proposedTitle;
+  const title = colorName ? `${colorName} ${categorySingular}` : edge.proposedTitle;
+
+  const bbox = edge.bbox
+    ? [
+        edge.bbox[0],
+        edge.bbox[1],
+        edge.bbox[2] - edge.bbox[0],
+        edge.bbox[3] - edge.bbox[1],
+      ]
+    : null;
 
   return {
     // Persist exactly these:
     title,
-    category,                       // e.g., "Tops", "Bottoms", "Bags", etc.
-    subcategory: null,              // Keep null until user chooses
-    color_name: colorName,          // snapped or null
-    color_hex:  colorHex,           // snapped or null
-    bbox: edge.bbox,                // normalized [x,y,w,h] or null
-    yolos_result: edge.result,      // trimmed array (for Debug overlay)
+    category, // e.g., "Tops", "Bottoms", "Bags", etc.
+    subcategory: null, // Keep null until user chooses
+    color_name: colorName, // snapped or null
+    color_hex: colorHex, // snapped or null
+    bbox, // normalized [x,y,w,h] or null
+    yolos_result: edge.result, // trimmed array (for Debug overlay)
     yolos_top_labels: edge.yolosTopLabels,
     yolos_model: edge.model,
     yolos_latency_ms: edge.latencyMs,
