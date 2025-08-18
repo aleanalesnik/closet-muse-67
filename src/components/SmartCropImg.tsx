@@ -29,7 +29,6 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     if (!img) return;
 
     function apply() {
-      console.log('[SmartCropImg] ==> apply() called', { bbox, src: src.substring(0, 50) + '...' });
       const container = img.parentElement!;
       const cw = container.clientWidth;
       const ch = container.clientHeight;
@@ -37,15 +36,19 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       const iw = img.naturalWidth || 0;
       const ih = img.naturalHeight || 0;
 
-      if (!bbox || !Array.isArray(bbox) || bbox.length !== 4 || iw === 0 || ih === 0) {
+      // Don't process if image dimensions aren't ready yet
+      if (iw === 0 || ih === 0) {
+        console.log('[SmartCropImg] ==> Skipping - image not loaded yet', { iw, ih });
+        return;
+      }
+
+      console.log('[SmartCropImg] ==> apply() called', { bbox, src: src.substring(0, 50) + '...', iw, ih });
+
+      if (!bbox || !Array.isArray(bbox) || bbox.length !== 4) {
         console.log('[SmartCropImg] ==> Using fallback - no valid bbox', { 
           bbox, 
           bboxIsArray: Array.isArray(bbox), 
-          bboxLength: bbox?.length,
-          iw, 
-          ih,
-          hasValidBbox: bbox && Array.isArray(bbox) && bbox.length === 4,
-          hasValidDimensions: iw > 0 && ih > 0
+          bboxLength: bbox?.length
         });
         setStyle({ 
           width: "100%", 
@@ -112,10 +115,12 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       });
     }
 
-    if (img.complete) {
+    // Always set up the load listener first
+    img.addEventListener('load', apply, { once: true });
+    
+    // Only run immediately if image is complete AND has dimensions
+    if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
       apply();
-    } else {
-      img.addEventListener('load', apply, { once: true });
     }
 
     const resizeObserver = new ResizeObserver(apply);
