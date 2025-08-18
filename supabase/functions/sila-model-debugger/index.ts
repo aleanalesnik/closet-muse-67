@@ -2,7 +2,7 @@
 // YOLOS (bbox) + CLIP (category) + optional Grounding-DINO fallback
 
 // --- Hard-coded Build Tag ---
-const BUILD = "sila-debugger-2025-08-17b";  // <-- update & redeploy when needed
+const BUILD = "sila-debugger-2025-08-17c";  // <-- update & redeploy when needed
 
 // --- Simple CORS helper ---
 const corsHeaders = {
