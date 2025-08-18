@@ -91,8 +91,8 @@ export async function analyzeImage(publicUrl: string) {
   // Start with proposedTitle from edge, update with color when available
   const title = colorName ? `${colorName} ${categorySingular}` : edge.proposedTitle;
 
-  // Edge function already returns [x, y, width, height] format - use directly
-  const bbox = edge.bbox;
+  // Ensure bbox is properly normalized before saving
+  const bbox = normalizeBbox(edge.bbox);
 
   return {
     // Persist exactly these:

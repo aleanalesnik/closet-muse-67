@@ -53,6 +53,12 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   if (!response.ok || fnData.status !== 'success') {
     return { itemId, imagePath, fn: { ok: false, error: fnData.error || "YOLOS detection failed" } };
   }
+
+  // Normalize bbox if present before returning
+  if (fnData.bbox) {
+    const { normalizeBbox } = await import('@/lib/yolos');
+    fnData.bbox = normalizeBbox(fnData.bbox);
+  }
   
   return { itemId, imagePath, fn: { ok: true, result: fnData.result } };
 }
