@@ -186,19 +186,31 @@ export default function Closet({ user }: ClosetProps) {
       await waitUntilPublic(publicUrl);
       
       console.info('[YOLOS] analyzing image with new API');
-      const analysis = await analyzeImage(publicUrl);
+      
+      // Get JWT token and function URL
+      const { data: { session } } = await supabase.auth.getSession();
+      const jwt = session?.access_token;
+      if (!jwt) throw new Error("Not authenticated");
+      
+      const functionUrl = `https://tqbjbugwwffdfhihpkcg.supabase.co/functions/v1/sila-model-debugger`;
+      const analysis = await analyzeImage(functionUrl, publicUrl, jwt);
       console.info('[YOLOS] analysis result', analysis);
       
-      // Analysis result is ready to persist
-      const updatePayload = {
-        ...analysis,
-        subcategory: null, // Always null after upload - user sets later
+      // Build payload using edge response directly 
+      const payload = {
+        title: analysis.proposedTitle ?? "Item",
+        category: analysis.category,          // <-- use edge category
+        subcategory: null,                    // Phase 1 will fill this later
+        color_hex: analysis.colorHex ?? null,
+        color_name: analysis.colorName ?? null,
+        bbox: analysis.bbox,                  // <-- save [x,y,w,h]
+        yolos_top_labels: analysis.yolosTopLabels ?? null,
       };
-      console.info('[YOLOS] persist', updatePayload);
+      console.info('[YOLOS] persist', payload);
 
       const { error: updateErr } = await supabase
         .from('items')
-        .update(updatePayload)
+        .update(payload)
         .eq('id', itemId);
         
       if (updateErr) {
@@ -212,7 +224,7 @@ export default function Closet({ user }: ClosetProps) {
         console.info('[YOLOS] OK');
         toast({
           title: 'Analysis complete',
-          description: `Detected: ${updatePayload.category || 'item'}, Color: ${updatePayload.color_name || 'unknown'}`
+          description: `Detected: ${payload.category || 'item'}, Color: ${payload.color_name || 'unknown'}`
         });
       }
       
@@ -222,7 +234,7 @@ export default function Closet({ user }: ClosetProps) {
       // Add the new item to the items list directly to preserve detections
       const newItem = {
         id: itemId,
-        ...updatePayload,
+        ...payload,
         image_path: imagePath,
         created_at: new Date().toISOString(),
         // Make sure isUploading is false for completed items
