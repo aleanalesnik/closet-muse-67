@@ -8,6 +8,26 @@ type Props = {
   alt?: string;
 };
 
+// Accept either [x,y,w,h] or [x1,y1,x2,y2] (all normalized 0..1) and return [x,y,w,h]
+function toXYWH(b?: number[] | null): [number, number, number, number] | null {
+  if (!b || !Array.isArray(b) || b.length !== 4) return null;
+  let [a, b1, c, d] = b.map(Number);
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  a = clamp(a); b1 = clamp(b1); c = clamp(c); d = clamp(d);
+
+  // If c>a and d>b1, this looks like [x1,y1,x2,y2] -> convert
+  if (c > a && d > b1) {
+    const w = clamp(c - a);
+    const h = clamp(d - b1);
+    if (w <= 0 || h <= 0) return null;
+    return [a, b1, w, h];
+  }
+
+  // Already [x,y,w,h]
+  if (c <= 0 || d <= 0) return null;
+  return [a, b1, c, d];
+}
+
 const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({ 
   src, 
   bbox, 
@@ -52,23 +72,20 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         return;
       }
 
-      if (!bbox || !Array.isArray(bbox) || bbox.length !== 4) {
-        console.log('[SmartCropImg] ==> Using fallback - no valid bbox', { 
-          bbox, 
-          bboxIsArray: Array.isArray(bbox), 
-          bboxLength: bbox?.length
-        });
-        setStyle({ 
-          width: "100%", 
-          height: "100%", 
-          objectFit: "contain", 
+      const xywh = toXYWH(bbox);
+      if (!xywh) {
+        // Fallback: non-distorting contain
+        setStyle({
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
           objectPosition: "center",
-          display: "block"
+          display: "block",
         });
         return;
       }
 
-      const [x, y, w, h] = bbox; // normalized [0..1]
+      const [x, y, w, h] = xywh;
       console.log('[SmartCropImg] ==> Processing bbox:', { x, y, w, h, iw, ih, cw, ch });
       
       // Calculate scale to fit the bbox with padding in the container
