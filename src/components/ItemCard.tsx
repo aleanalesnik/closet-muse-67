@@ -43,13 +43,16 @@ export default function ItemCard({
         : 'hover:shadow-lg'
     }`} 
     onClick={isSelectionMode ? onToggleSelection : undefined}>
-      <div className="aspect-square relative bg-muted/20 overflow-hidden rounded-xl">
+      <div
+        className="relative overflow-hidden rounded-xl bg-white border"
+        style={{ aspectRatio: "4 / 3" }}
+      >
         <SmartCropImg
           src={imageUrl}
           bbox={item.bbox as any}
           alt={item.title || 'Closet item'}
           className="w-full h-full rounded-xl"
-          paddingPct={0.1}
+          paddingPct={0.10}
         />
         
         {isSelectionMode && (
