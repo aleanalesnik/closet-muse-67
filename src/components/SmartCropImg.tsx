@@ -157,7 +157,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
   }, [bbox, paddingPct, src]);
 
   return (
-    <div className={`relative overflow-hidden flex items-center justify-center ${className}`}>
+    <div className={`relative overflow-hidden ${className}`}>
       <img
         ref={(el) => {
           localImgRef.current = el;
@@ -171,7 +171,6 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         alt={alt}
         draggable={false}
         style={style}
-        className="max-w-full max-h-full"
       />
     </div>
   );
