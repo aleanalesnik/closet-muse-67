@@ -36,13 +36,21 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       const iw = img.naturalWidth || 0;
       const ih = img.naturalHeight || 0;
 
+      console.log('[SmartCropImg] ==> apply() called', { 
+        bbox, 
+        src: src.substring(0, 50) + '...', 
+        iw, 
+        ih, 
+        cw, 
+        ch,
+        complete: img.complete 
+      });
+
       // Don't process if image dimensions aren't ready yet
       if (iw === 0 || ih === 0) {
-        console.log('[SmartCropImg] ==> Skipping - image not loaded yet', { iw, ih });
+        console.log('[SmartCropImg] ==> Skipping - image not loaded yet');
         return;
       }
-
-      console.log('[SmartCropImg] ==> apply() called', { bbox, src: src.substring(0, 50) + '...', iw, ih });
 
       if (!bbox || !Array.isArray(bbox) || bbox.length !== 4) {
         console.log('[SmartCropImg] ==> Using fallback - no valid bbox', { 
@@ -115,22 +123,38 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       });
     }
 
-    // Always set up the load listener first
-    img.addEventListener('load', apply, { once: true });
+    // Set up both load and error handlers
+    const handleLoad = () => {
+      console.log('[SmartCropImg] ==> Image loaded');
+      setTimeout(apply, 10); // Small delay to ensure layout is complete
+    };
+
+    const handleError = () => {
+      console.log('[SmartCropImg] ==> Image error');
+    };
+
+    img.addEventListener('load', handleLoad);
+    img.addEventListener('error', handleError);
     
-    // Only run immediately if image is complete AND has dimensions
-    if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
-      apply();
+    // Check if image is already loaded
+    if (img.complete && img.naturalWidth > 0) {
+      console.log('[SmartCropImg] ==> Image already loaded');
+      handleLoad();
     }
 
-    const resizeObserver = new ResizeObserver(apply);
+    const resizeObserver = new ResizeObserver(() => {
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        apply();
+      }
+    });
     resizeObserver.observe(img.parentElement!);
     
     return () => {
       resizeObserver.disconnect();
-      img.removeEventListener('load', apply);
+      img.removeEventListener('load', handleLoad);
+      img.removeEventListener('error', handleError);
     };
-  }, [bbox, paddingPct]);
+  }, [bbox, paddingPct, src]);
 
   return (
     <div className={`relative overflow-hidden flex items-center justify-center ${className}`}>
