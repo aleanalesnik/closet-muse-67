@@ -1,5 +1,5 @@
 // src/lib/yolos.ts
-export type NormBbox = [number, number, number, number]; // [x,y,w,h] normalized
+export type NormBbox = [number, number, number, number]; // [x,y,w,h], normalized 0..1
 
 export type EdgeDet = {
   score: number;
@@ -25,31 +25,42 @@ function clamp01(n: number) {
   return Math.min(1, Math.max(0, n));
 }
 
-/** Accepts [x,y,w,h], [x1,y1,x2,y2], or {xmin,...}; always returns [x,y,w,h] */
+/**
+ * Deterministic normalizer:
+ * - Arrays whose values are all in [0,1] are treated as normalized [x,y,w,h] (no guessing).
+ * - Object form { xmin, ymin, xmax, ymax } is converted to xywh and clamped to [0,1].
+ * - Any pixel-space arrays (>1) are rejected here (edge returns normalized; old rows should
+ *   be handled by SmartCrop guard below).
+ */
 export function normalizeBbox(b: any): NormBbox | null {
   if (!b) return null;
 
-  if (Array.isArray(b) && b.length === 4) {
-    const [a,b1,c,d] = b.map(Number);
-    if ([a,b1,c,d].every(Number.isFinite)) {
-      // Heuristic: xyxy if c > a && d > b1, else assume xywh
-      if (c > a && d > b1) {
-        const w = clamp01(c - a);
-        const h = clamp01(d - b1);
-        if (w <= 0 || h <= 0) return null;
-        return [clamp01(a), clamp01(b1), w, h];
-      }
-      if (c > 0 && d > 0) return [clamp01(a), clamp01(b1), clamp01(c), clamp01(d)];
-    }
-  } else if (typeof b === "object") {
-    const arr = [b.xmin, b.ymin, b.xmax, b.ymax].map((n) => Number(n));
+  // Object form -> xyxy -> xywh
+  if (typeof b === "object" && !Array.isArray(b)) {
+    const arr = [b.xmin, b.ymin, b.xmax, b.ymax].map(Number);
     if (arr.every(Number.isFinite)) {
-      const [x1,y1,x2,y2] = arr;
+      let [x1, y1, x2, y2] = arr;
       const w = clamp01(x2 - x1);
       const h = clamp01(y2 - y1);
       if (w <= 0 || h <= 0) return null;
       return [clamp01(x1), clamp01(y1), w, h];
     }
+    return null;
+  }
+
+  // Array form
+  if (Array.isArray(b) && b.length === 4) {
+    const [x, y, w, h] = b.map(Number);
+    if (![x, y, w, h].every(Number.isFinite)) return null;
+
+    const allIn01 = [x, y, w, h].every(v => v >= 0 && v <= 1);
+    if (allIn01) {
+      if (w <= 0 || h <= 0) return null;
+      return [clamp01(x), clamp01(y), clamp01(w), clamp01(h)];
+    }
+
+    // Not normalized (likely pixels) — reject here. The component guard will avoid mis-crops.
+    return null;
   }
 
   return null;

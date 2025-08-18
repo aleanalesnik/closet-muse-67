@@ -10,10 +10,13 @@ type Props = {
 
 function toXYWH(b?: number[] | null): number[] | null {
   if (!b || b.length !== 4) return null;
-  const [a,b1,c,d] = b;
-  // looks like xyxy if c>a & d>b1 and all ≤1
-  if (c > a && d > b1 && c <= 1 && d <= 1) return [a, b1, c - a, d - b1];
-  return b; // assume already [x,y,w,h]
+  const [x, y, w, h] = b.map(Number);
+  // If it looks normalized, trust it's already [x,y,w,h]
+  const allIn01 = [x, y, w, h].every(v => v >= 0 && v <= 1);
+  if (allIn01 && w > 0 && h > 0) return [x, y, w, h];
+
+  // Anything else (pixels or malformed) -> ignore to prevent snap
+  return null;
 }
 
 const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({ 
