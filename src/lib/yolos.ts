@@ -12,8 +12,8 @@ export type EdgeResponse = {
   proposedTitle: string;            // e.g., "Bags", "Dress"
   colorName: null;                  // always null from edge
   colorHex: null;                   // always null from edge
-  yolosTopLabels: string[];         // for debug
-  result: TrimDet[];                // trimmed detections for overlay
+  yolosTopLabels: string[];         // top detected labels
+  result: TrimDet[];                // detection results for visualization
   latencyMs: number;
   model: string;
 };
@@ -102,7 +102,7 @@ export async function analyzeImage(publicUrl: string) {
     color_name: colorName, // snapped or null
     color_hex: colorHex, // snapped or null
     bbox, // normalized [x,y,w,h] or null
-    yolos_result: edge.result, // trimmed array (for Debug overlay)
+    yolos_result: edge.result, // detection results
     yolos_top_labels: edge.yolosTopLabels,
     yolos_model: edge.model,
     yolos_latency_ms: edge.latencyMs,

@@ -28,7 +28,7 @@ interface Item {
   image_path: string;
   created_at: string;
   yolos_top_labels?: string[];
-  yolos_result?: any[];  // Array of detections for debug overlay
+  yolos_result?: any[];  // Detection results
   bbox?: number[] | null;
 }
 
@@ -106,13 +106,13 @@ export default function Closet({ user }: ClosetProps) {
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    console.log('[DEBUG] handleFileUpload called, file:', file?.name);
+    // Handle file upload
     if (!file) return;
 
     // Create preview URL
     const preview = URL.createObjectURL(file);
     const uploadingId = crypto.randomUUID();
-    console.log('[DEBUG] Created preview and uploadingId:', uploadingId);
+    // Create preview and add to uploading items
     
     // Add to uploading items immediately (in grid position)
     const uploadingItem: UploadingItem = {
@@ -124,7 +124,7 @@ export default function Closet({ user }: ClosetProps) {
     };
     
     setUploadingItems(prev => [uploadingItem, ...prev]);
-    console.log('[DEBUG] Added to uploading items');
+    
     
     try {
       console.log('[YOLOS] Starting upload:', file.name);
@@ -133,25 +133,21 @@ export default function Closet({ user }: ClosetProps) {
       const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
       const objectId = crypto.randomUUID();
       const imagePath = `${user.id}/items/${objectId}.${ext}`;
-      console.log('[DEBUG] About to upload to storage:', imagePath);
+      
       
       const { error: upErr } = await supabase.storage.from('sila').upload(imagePath, file, {
         contentType: file.type || `image/${ext}`,
         upsert: true
       });
       
-      console.log('[DEBUG] Storage upload result:', { error: upErr });
+      
       if (upErr) throw upErr;
       
-      // Create DB row with proper auth check
-      console.log('[DEBUG] Checking authentication...');
       const { data: { user: authUser }, error: userErr } = await supabase.auth.getUser();
-      console.log('[DEBUG] Auth check result:', { userId: authUser?.id, error: userErr });
       if (userErr || !authUser) {
         throw new Error("Not authenticated");
       }
 
-      console.log('[DEBUG] About to insert DB row for user:', authUser.id);
       const { data: itemRow, error: insertErr } = await supabase
         .from("items")
         .insert({
@@ -165,7 +161,6 @@ export default function Closet({ user }: ClosetProps) {
         .select()
         .single();
 
-      console.log('[DEBUG] DB insert result:', { itemRow, error: insertErr });
       if (insertErr) {
         console.error("Insert failed", insertErr);
         throw insertErr;

@@ -1,10 +1,8 @@
 import { supabase } from "@/lib/supabase";
 
 export async function uploadAndProcessItem(file: File, title?: string) {
-  console.log("uploadAndProcessItem called with:", { fileName: file.name, title });
-  // 1) current user
+  // Check authentication
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
-  console.log("Auth check:", { user: user?.id, error: userErr });
   if (userErr || !user) throw new Error("Not signed in");
 
   // 2) make a storage path (keep bucket private)
@@ -12,13 +10,11 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   const objectId = crypto.randomUUID(); // not the DB id
   const imagePath = `${user.id}/items/${objectId}.${ext}`;
 
-  // 3) upload to storage
-  console.log("Uploading to storage:", imagePath);
+  // Upload to storage
   const { error: upErr } = await supabase.storage.from("sila").upload(imagePath, file, {
     contentType: file.type || `image/${ext}`,
     upsert: true
   });
-  console.log("Storage upload result:", { error: upErr });
   if (upErr) throw upErr;
 
   // 4) create DB row (so we have an item id & owner)
@@ -34,7 +30,7 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   if (insErr) throw insErr;
 
   const itemId = inserted.id as string;
-  console.log('[SILA] UPLOAD PATH ACTIVE', { itemId });
+  
 
   // 5) Get public URL for the uploaded image
   const { data: urlData } = supabase.storage
@@ -42,9 +38,7 @@ export async function uploadAndProcessItem(file: File, title?: string) {
     .getPublicUrl(imagePath);
   
   const imageUrl = urlData.publicUrl;
-  console.log('[SILA] Calling sila-model-debugger with imageUrl:', imageUrl);
-
-  // 6) Call sila-model-debugger directly
+  // Call sila-model-debugger directly
   const response = await fetch(`https://tqbjbugwwffdfhihpkcg.supabase.co/functions/v1/sila-model-debugger`, {
     method: 'POST',
     headers: {
@@ -55,7 +49,6 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   });
 
   const fnData = await response.json();
-  console.log("sila-model-debugger response:", fnData);
 
   if (!response.ok || fnData.status !== 'success') {
     return { itemId, imagePath, fn: { ok: false, error: fnData.error || "YOLOS detection failed" } };

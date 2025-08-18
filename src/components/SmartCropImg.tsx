@@ -43,19 +43,8 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       const iw = img.naturalWidth || 0;
       const ih = img.naturalHeight || 0;
 
-      console.log('[SmartCropImg] ==> apply() called', { 
-        bbox, 
-        src: src.substring(0, 50) + '...', 
-        iw, 
-        ih, 
-        cw, 
-        ch,
-        complete: img.complete 
-      });
-
       // Don't process if image dimensions aren't ready yet
       if (iw === 0 || ih === 0) {
-        console.log('[SmartCropImg] ==> Skipping - image not loaded yet');
         return;
       }
 
@@ -73,7 +62,6 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       }
 
       const [x, y, w, h] = safeBox;
-      console.log('[SmartCropImg] ==> Processing bbox:', { x, y, w, h, iw, ih, cw, ch });
       
       // Calculate scale to fit the bbox with padding in the container
       const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
@@ -97,24 +85,6 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       const offsetX = targetBboxCenterX - currentBboxCenterX;
       const offsetY = targetBboxCenterY - currentBboxCenterY;
 
-      console.log('[SmartCropImg] ==> Final calculations:', { 
-        scale, 
-        scaledImageWidth, 
-        scaledImageHeight, 
-        targetBboxCenterX, 
-        targetBboxCenterY, 
-        currentBboxCenterX, 
-        currentBboxCenterY,
-        offsetX, 
-        offsetY,
-        finalStyle: {
-          width: scaledImageWidth,
-          height: scaledImageHeight,
-          top: offsetY,
-          left: offsetX
-        }
-      });
-
       setStyle({
         width: scaledImageWidth,
         height: scaledImageHeight,
@@ -129,12 +99,11 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
 
     // Set up both load and error handlers
     const handleLoad = () => {
-      console.log('[SmartCropImg] ==> Image loaded');
       setTimeout(apply, 10); // Small delay to ensure layout is complete
     };
 
     const handleError = () => {
-      console.log('[SmartCropImg] ==> Image error');
+      // Image error occurred
     };
 
     img.addEventListener('load', handleLoad);
@@ -142,7 +111,6 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     
     // Check if image is already loaded
     if (img.complete && img.naturalWidth > 0) {
-      console.log('[SmartCropImg] ==> Image already loaded');
       handleLoad();
     }
 
