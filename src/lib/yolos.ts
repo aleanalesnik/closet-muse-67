@@ -2,13 +2,13 @@
 import { supabase } from "@/lib/supabase";
 import { getDominantColor, snapToPalette } from "@/lib/color";
 
-export type NormBbox = [number, number, number, number];
+export type NormBbox = [number, number, number, number]; // ALWAYS [x,y,w,h]
 export type TrimDet = { score: number; label: string; box: NormBbox | null };
 
 export type EdgeResponse = {
   status: "success";
   category: string;                 // e.g., "Tops", "Bottoms", "Bags", etc.
-  bbox: NormBbox | null;            // normalized [x1,y1,x2,y2] or null
+  bbox: NormBbox | null;            // normalized [x,y,w,h] or null
   proposedTitle: string;            // e.g., "Bags", "Dress"
   colorName: null;                  // always null from edge
   colorHex: null;                   // always null from edge
@@ -28,16 +28,31 @@ export async function waitUntilPublic(url: string) {
 }
 
 export function normalizeBbox(b: any): NormBbox | null {
-  if (!Array.isArray(b) || b.length !== 4) return null;
-  const [x1, y1, x2, y2] = b.map((v: any) => Number(v));
-  if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
-  const clamp = (v: number) => Math.min(1, Math.max(0, v));
-  const nx1 = clamp(Math.min(x1, x2));
-  const ny1 = clamp(Math.min(y1, y2));
-  const nx2 = clamp(Math.max(x1, x2));
-  const ny2 = clamp(Math.max(y1, y2));
-  if (nx2 - nx1 < 0.001 || ny2 - ny1 < 0.001) return null;
-  return [nx1, ny1, nx2, ny2];
+  if (!b) return null;
+  const clamp = (v: number) => Math.min(1, Math.max(0, Number(v)));
+
+  // Accept array or legacy object
+  let arr: number[] | null = null;
+  if (Array.isArray(b) && b.length === 4) {
+    arr = b.map(clamp);
+  } else if (typeof b === "object") {
+    const maybe = [b.xmin, b.ymin, b.xmax, b.ymax].map(clamp);
+    if (maybe.every((n) => Number.isFinite(n))) arr = maybe;
+  }
+  if (!arr) return null;
+  let [a, b1, c, d] = arr;
+
+  // If it looks like [x1,y1,x2,y2], convert to [x,y,w,h]
+  if (c > a && d > b1) {
+    const w = Math.min(1, c - a);
+    const h = Math.min(1, d - b1);
+    if (w <= 0 || h <= 0) return null;
+    return [a, b1, w, h];
+  }
+
+  // Already [x,y,w,h]
+  if (c <= 0 || d <= 0) return null;
+  return [a, b1, c, d];
 }
 
 function singularizeCategory(k: string): string {
