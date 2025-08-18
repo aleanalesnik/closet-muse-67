@@ -61,8 +61,8 @@ export function normalizeBbox(b: any): NormBbox | null {
 
 function singularizeCategory(k: string): string {
   const s = k.toLowerCase();
-  if (s === "bottoms") return "bottom";
-  if (s === "tops") return "top";
+  if (s === "bottoms") return "bottoms"; // Keep "bottoms" plural
+  if (s === "tops") return "tops"; // Keep "tops" plural
   return k.toLowerCase();
 }
 

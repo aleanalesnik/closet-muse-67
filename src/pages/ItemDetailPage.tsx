@@ -46,18 +46,18 @@ type ItemRow = {
 
 const CATEGORY_OPTIONS = [
   "accessory",
-  "bag",
-  "bottom",
+  "bag", 
+  "bottoms", // changed to plural to match AI detection
   "dress",
-  "outerwear",
+  "outerwear", 
   "shoes",
-  "top",
+  "tops", // changed to plural to match AI detection
 ] as const;
 
 const SUBCATS: Record<(typeof CATEGORY_OPTIONS)[number], string[]> = {
   accessory: [
     "belt",
-    "hat",
+    "hat", 
     "cap",
     "beanie",
     "scarf",
@@ -66,13 +66,13 @@ const SUBCATS: Record<(typeof CATEGORY_OPTIONS)[number], string[]> = {
     "jewelry",
   ],
   bag: ["handbag", "tote bag", "shoulder bag", "crossbody bag", "backpack"],
-  bottom: ["jeans", "trousers", "pants", "skirt", "shorts"],
+  bottoms: ["jeans", "trousers", "pants", "skirt", "shorts"], // updated key to plural
   dress: ["dress"],
   outerwear: ["jacket", "blazer", "coat", "cardigan", "hoodie"],
   shoes: ["sneakers", "boots", "heels", "loafers", "sandals"],
-  top: [
+  tops: [ // updated key to plural
     "t-shirt",
-    "shirt",
+    "shirt", 
     "blouse",
     "sweater",
     "tank top",
@@ -136,7 +136,9 @@ export default function ItemDetailPage() {
       setItem(data as ItemRow);
       setTitle(data.title ?? "");
       setBrand(data.brand ?? "");
-      setCategory(data.category ?? null);
+      // Normalize category from database to match dropdown options
+      const normalizedCategory = data.category?.toLowerCase();
+      setCategory(normalizedCategory || null);
       setSubcategory(data.subcategory ?? null);
       setColorName(data.color_name ?? null);
       setColorHex(data.color_hex ?? null);
