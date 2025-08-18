@@ -2,7 +2,7 @@
 import { supabase } from "@/lib/supabase";
 import { getDominantColor, snapToPalette } from "@/lib/color";
 
-export type NormBbox = [number, number, number, number]; // ALWAYS [x,y,w,h]
+export type NormBbox = [number, number, number, number]; // xywh in 0..1
 export type TrimDet = { score: number; label: string; box: NormBbox | null };
 
 export type EdgeResponse = {
@@ -27,36 +27,26 @@ export async function waitUntilPublic(url: string) {
   throw new Error("Public URL never became readable");
 }
 
+function clamp01(n: number) { return Math.min(1, Math.max(0, n)); }
+
 export function normalizeBbox(b: any): NormBbox | null {
   if (!b) return null;
-  const clamp = (v: number) => Math.min(1, Math.max(0, Number(v)));
-
-  // accept array or legacy object
   let arr: number[] | null = null;
-  if (Array.isArray(b) && b.length === 4) {
-    arr = b.map(clamp);
-  } else if (typeof b === "object") {
-    // legacy {xmin, ymin, xmax, ymax}
-    const maybe = [b.xmin, b.ymin, b.xmax, b.ymax].map((n: any) => Number(n));
-    if (maybe.every((n) => Number.isFinite(n))) arr = maybe.map(clamp);
+  if (Array.isArray(b) && b.length === 4) arr = b.map(Number);
+  else if (typeof b === "object") {
+    const may = [b.xmin, b.ymin, b.xmax, b.ymax].map((n:any) => Number(n));
+    if (may.every(Number.isFinite)) arr = may;
   }
-  if (!arr) return null;
-
-  let [a, b1, c, d] = arr;
-
-  // Prefer XYWH if it passes the physical constraints
-  const looksXYWH = c > 0 && d > 0 && a + c <= 1 && b1 + d <= 1;
-  if (looksXYWH) return [a, b1, c, d];
-
-  // Otherwise treat as XYXY if valid
+  if (!arr || arr.some(v => !Number.isFinite(v))) return null;
+  let [a,b1,c,d] = arr.map(clamp01);
   const looksXYXY = c > a && d > b1 && c <= 1 && d <= 1;
   if (looksXYXY) {
-    const w = Math.min(1, c - a);
-    const h = Math.min(1, d - b1);
-    if (w > 0 && h > 0) return [a, b1, w, h];
+    const w = clamp01(c - a), h = clamp01(d - b1);
+    if (w <= 0 || h <= 0) return null;
+    return [a, b1, w, h];
   }
-
-  return null;
+  if (c <= 0 || d <= 0) return null; // invalid xywh
+  return [a, b1, c, d];
 }
 
 function singularizeCategory(k: string): string {
