@@ -133,8 +133,14 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
       const offsetY = targetCy - bboxCy;
 
       // *** Critical fix: clamp translate so the image can't slide out of view ***
-      const tx = clamp(offsetX, cw - scaledW, 0);
-      const ty = clamp(offsetY, ch - scaledH, 0);
+      const bounds = (scaled: number, container: number) =>
+        scaled >= container ? [container - scaled, 0] as const : [0, container - scaled] as const;
+
+      const [minX, maxX] = bounds(scaledW, cw);
+      const [minY, maxY] = bounds(scaledH, ch);
+
+      const tx = clamp(offsetX, minX, maxX);
+      const ty = clamp(offsetY, minY, maxY);
 
       // Safety fallback: if intersection area is ~0 (somehow), center the whole image.
       const visibleW = Math.max(0, Math.min(cw, Math.min(cw - tx, scaledW)));
