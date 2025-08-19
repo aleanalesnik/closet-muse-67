@@ -14,20 +14,28 @@ export type EdgeResponse = {
   bbox: BBoxArray | null;      // <-- TRUST THIS (already [x,y,w,h])
   proposedTitle?: string | null;
   colorName?: string | null;
-  colorHex?: string | null;
-  yolosTopLabels?: string[];
-  result: EdgeDet[];
-  latencyMs: number;
-  model: string;
+  result?: EdgeDet[];         // <-- optional detector results
 };
 
 /**
- * Best-effort bbox parser.
+ * normalizeBbox:
+ * Accepts array or object forms and returns a plain 4-number tuple or null.
  * - Arrays are returned as number tuples if all entries are finite.
  * - Object form { xmin, ymin, xmax, ymax } is converted to an array.
  * This function does not try to normalize or interpret the values; the
  * SmartCropImg component will convert pixel or normalized boxes as needed.
  */
+// Converts 0–100 percent-based [x,y,w,h] into 0–1 if detected.
+// Pass-through for 0–1 or pixel-space (which SmartCropImg can handle later with dimensions).
+export function toUnitBox(b: BBoxArray | null): BBoxArray | null {
+  if (!b) return null;
+  const max = Math.max(...b);
+  if (max > 1 && max <= 100) {
+    return [b[0] / 100, b[1] / 100, b[2] / 100, b[3] / 100] as BBoxArray;
+  }
+  return b;
+}
+
 export function normalizeBbox(b: any): BBoxArray | null {
   if (!b) return null;
 
@@ -54,13 +62,20 @@ export async function analyzeImage(functionUrl: string, imageUrl: string, jwt: s
     },
     body: JSON.stringify({ imageUrl }),
   });
-  if (!r.ok) throw new Error(`Edge error ${r.status}: ${await r.text().catch(() => "")}`);
-  const raw = await r.json();
 
-  // Normalize defensively (keeps old rows safe)
-  raw.bbox = normalizeBbox(raw.bbox);
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`Edge returned ${r.status} ${r.statusText}: ${text}`);
+  }
+
+  const raw = await r.json();
+  console.info("[YOLOS] raw bbox", raw?.bbox);
+
+  // Normalize main bbox + each detector result's box
+  raw.bbox = toUnitBox(normalizeBbox(raw.bbox));
+
   if (Array.isArray(raw.result)) {
-    raw.result = raw.result.map((d: any) => ({ ...d, box: normalizeBbox(d.box) })).filter((d: any) => d.box);
+    raw.result = raw.result.map((d: any) => ({ ...d, box: toUnitBox(normalizeBbox(d.box)) })).filter((d: any) => d.box);
   }
   return raw as EdgeResponse;
 }
