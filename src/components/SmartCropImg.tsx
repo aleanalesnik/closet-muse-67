@@ -51,8 +51,13 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
   // Convert bbox to normalized [x,y,w,h] if available
   const xywh = toXYWH(bbox);
   
+  // DEBUG: Log what we're getting
+  console.log('[SmartCrop] Raw bbox:', bbox);
+  console.log('[SmartCrop] Processed xywh:', xywh);
+  
   if (!xywh) {
     // No valid bbox, show regular image
+    console.log('[SmartCrop] No valid bbox, showing regular image');
     return (
       <div className={`relative overflow-hidden ${className}`}>
         <img
@@ -74,6 +79,8 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
   // Apply smart cropping with scale and translate
   const [x, y, w, h] = xywh;
   
+  console.log('[SmartCrop] Applying smart crop with bbox:', { x, y, w, h });
+  
   // Add padding to the detection area
   const paddedW = Math.min(1, w + (w * paddingPct * 2));
   const paddedH = Math.min(1, h + (h * paddingPct * 2));
@@ -94,6 +101,16 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
   // After scaling, we need to translate so bbox center becomes container center (50%)
   const translateX = (0.5 - bboxCenterX) * scale * 100;
   const translateY = (0.5 - bboxCenterY) * scale * 100;
+  
+  console.log('[SmartCrop] Transform values:', { 
+    scale, 
+    translateX, 
+    translateY,
+    paddedW,
+    paddedH,
+    bboxCenterX,
+    bboxCenterY
+  });
   
   return (
     <div className={`relative overflow-hidden ${className}`}>
