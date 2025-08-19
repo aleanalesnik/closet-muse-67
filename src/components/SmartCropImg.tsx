@@ -113,8 +113,8 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       const targetBboxCenterY = ch / 2;
       
       // Calculate where the bbox center currently is in the scaled image
-      const currentBboxCenterX = (x + w/2) * iw * scale;
-      const currentBboxCenterY = (y + h/2) * ih * scale;
+      const currentBboxCenterX = (x + w / 2) * iw * scale;
+      const currentBboxCenterY = (y + h / 2) * ih * scale;
       
       // Calculate offset to move bbox center to target center
       const offsetX = targetBboxCenterX - currentBboxCenterX;
