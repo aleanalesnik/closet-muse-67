@@ -17,45 +17,36 @@ function toXYWH(b?: number[] | null, iw?: number, ih?: number): number[] | null 
   const arr = b.map(Number);
   if (!arr.every(Number.isFinite)) return null;
 
-  const [x1, y1, x2, y2] = arr;
-  const anyPixels = arr.some(v => v > 1);
+  let [x1, y1, x2, y2] = arr;
+  const max = Math.max(...arr);
 
-  if (anyPixels) {
-    if (!iw || !ih) return null;
-    // Assume pixel space
-    if (x2 > x1 && y2 > y1) {
-      // xyxy pixels
-      const x = clamp01(x1 / iw);
-      const y = clamp01(y1 / ih);
-      const w = clamp01((x2 - x1) / iw);
-      const h = clamp01((y2 - y1) / ih);
-      if (w <= 0 || h <= 0) return null;
-      return [x, y, w, h];
+  if (max > 1) {
+    // Handle either percentage 0-100 or pixel space
+    if (max <= 100) {
+      // percentages
+      x1 /= 100; y1 /= 100; x2 /= 100; y2 /= 100;
+    } else {
+      if (!iw || !ih) return null;
+      x1 /= iw; y1 /= ih; x2 /= iw; y2 /= ih;
     }
-    // xywh pixels
-    const x = clamp01(x1 / iw);
-    const y = clamp01(y1 / ih);
-    const w = clamp01(x2 / iw);
-    const h = clamp01(y2 / ih);
-    if (w <= 0 || h <= 0) return null;
-    return [x, y, w, h];
   }
 
-  const in01 = arr.every(v => v >= 0 && v <= 1);
+  // At this point values are normalized 0-1
+  const in01 = [x1, y1, x2, y2].every(v => v >= 0 && v <= 1);
   if (!in01) return null;
 
-  // Try interpreting as [x,y,w,h] with clamping to bounds
-  const w1 = Math.min(x2, 1 - x1);
-  const h1 = Math.min(y2, 1 - y1);
-  if (w1 > 0 && h1 > 0) return [x1, y1, w1, h1];
-
-  // Fallback: treat as [x1,y1,x2,y2]
+  // Prefer interpreting as [x1,y1,x2,y2]
   if (x2 > x1 && y2 > y1) {
     const w = clamp01(x2 - x1);
     const h = clamp01(y2 - y1);
     if (w > 0 && h > 0) return [clamp01(x1), clamp01(y1), w, h];
   }
-  // Anything else (pixels or malformed) -> ignore to prevent snap
+
+  // Fallback: treat as [x,y,w,h]
+  const w = clamp01(Math.min(x2, 1 - x1));
+  const h = clamp01(Math.min(y2, 1 - y1));
+  if (w > 0 && h > 0) return [clamp01(x1), clamp01(y1), w, h];
+
   return null;
 }
 
