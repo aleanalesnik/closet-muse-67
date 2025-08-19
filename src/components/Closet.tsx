@@ -88,6 +88,8 @@ export default function Closet({ user }: ClosetProps) {
 
       if (error) throw error;
       const itemsData = (data || []).map(it => ({ ...it, bbox: normalizeBbox(it.bbox) }));
+      // Debug: show the first few bboxes so you can tell if they're null/invalid
+      console.info("[Closet] first few bboxes", itemsData.slice(0, 5).map(i => i.bbox));
       setItems(itemsData);
 
       const imagePaths = itemsData.map(item => item.image_path).filter(Boolean);
