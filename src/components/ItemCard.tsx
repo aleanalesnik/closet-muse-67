@@ -51,6 +51,7 @@ export default function ItemCard({
           src={imageUrl}
           bbox={item.bbox as any}
           className="w-full h-full rounded-xl bg-white"
+          mode="fit"
           paddingPct={0.08}
         />
         

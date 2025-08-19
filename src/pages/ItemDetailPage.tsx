@@ -252,9 +252,10 @@ export default function ItemDetailPage() {
             <SmartCropImg
               src={imageUrl}
               bbox={item.bbox as any}
-              alt={title || "item"}
-              className="w-full h-full"
-              paddingPct={0.1}
+              alt={item.title || "Item"}
+              className="w-full h-full rounded-xl bg-white"
+              mode="fit"
+              paddingPct={0.08}
             />
           ) : (
             <div className="text-sm text-muted-foreground">No image</div>
