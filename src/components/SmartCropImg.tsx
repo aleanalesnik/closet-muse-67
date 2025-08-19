@@ -71,41 +71,16 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     );
   }
 
-  // Smart composition: use bounding box as a guide, not a literal crop target
+  // Use bounding box to determine optimal object-position
   const [x, y, w, h] = xywh;
   
   // Calculate the center of the detected item
   const centerX = x + w / 2;
   const centerY = y + h / 2;
   
-  // Analyze the bounding box to determine crop strategy
-  const bboxArea = w * h;
-  const isSmallItem = bboxArea < 0.15; // Accessories, small items
-  const isLargeItem = bboxArea > 0.6;  // Full body shots
-  
-  let scale = 1;
-  let cropCenterX = centerX;
-  let cropCenterY = centerY;
-  
-  if (isSmallItem) {
-    // For small items (bags, accessories), zoom in moderately
-    scale = 1.8;
-  } else if (isLargeItem) {
-    // For large items (full outfits), minimal zoom - just center
-    scale = 1.1;
-  } else {
-    // For medium items (typical clothing), moderate crop
-    scale = 1.4;
-  }
-  
-  // Ensure we don't crop too much from edges
-  const margin = 0.1; // 10% margin from edges
-  cropCenterX = Math.max(margin, Math.min(1 - margin, cropCenterX));
-  cropCenterY = Math.max(margin, Math.min(1 - margin, cropCenterY));
-  
-  // Calculate final positioning
-  const translateX = (0.5 - cropCenterX) * 100;
-  const translateY = (0.5 - cropCenterY) * 100;
+  // Convert to percentage for CSS object-position
+  const objectPositionX = (centerX * 100).toFixed(1);
+  const objectPositionY = (centerY * 100).toFixed(1);
   
   return (
     <div className={`relative overflow-hidden ${className}`}>
@@ -118,8 +93,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          transform: `scale(${scale}) translate(${translateX}%, ${translateY}%)`,
-          transformOrigin: "center center"
+          objectPosition: `${objectPositionX}% ${objectPositionY}%`
         }}
       />
     </div>
