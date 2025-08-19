@@ -1,17 +1,17 @@
 // src/lib/yolos.ts
-export type NormBbox = [number, number, number, number]; // [x,y,w,h], normalized 0..1
+export type BBoxArray = [number, number, number, number]; // generic bbox tuple
 
 export type EdgeDet = {
   score: number;
   label: string;
-  box: NormBbox | null;
+  box: BBoxArray | null;
 };
 
 export type EdgeResponse = {
   status: "success";
   build: string;
   category: string;           // <-- TRUST THIS
-  bbox: NormBbox | null;      // <-- TRUST THIS (already [x,y,w,h])
+  bbox: BBoxArray | null;      // <-- TRUST THIS (already [x,y,w,h])
   proposedTitle?: string | null;
   colorName?: string | null;
   colorHex?: string | null;
@@ -21,59 +21,24 @@ export type EdgeResponse = {
   model: string;
 };
 
-function clamp01(n: number) {
-  return Math.min(1, Math.max(0, n));
-}
-
 /**
- * Deterministic normalizer:
- * - Arrays whose values are all in [0,1] are treated as normalized [x,y,w,h] (no guessing).
- * - Object form { xmin, ymin, xmax, ymax } is converted to xywh and clamped to [0,1].
- * - Any pixel-space arrays (>1) are rejected here (edge returns normalized; old rows should
- *   be handled by SmartCrop guard below).
+ * Best-effort bbox parser.
+ * - Arrays are returned as number tuples if all entries are finite.
+ * - Object form { xmin, ymin, xmax, ymax } is converted to an array.
+ * This function does not try to normalize or interpret the values; the
+ * SmartCropImg component will convert pixel or normalized boxes as needed.
  */
-export function normalizeBbox(b: any): NormBbox | null {
+export function normalizeBbox(b: any): BBoxArray | null {
   if (!b) return null;
 
-  // Object form -> xyxy -> xywh
-  if (typeof b === "object" && !Array.isArray(b)) {
-    const arr = [b.xmin, b.ymin, b.xmax, b.ymax].map(Number);
-    if (arr.every(Number.isFinite)) {
-      let [x1, y1, x2, y2] = arr;
-      const w = clamp01(x2 - x1);
-      const h = clamp01(y2 - y1);
-      if (w <= 0 || h <= 0) return null;
-      return [clamp01(x1), clamp01(y1), w, h];
-    }
-    return null;
-  }
-
-  // Array form
   if (Array.isArray(b) && b.length === 4) {
     const arr = b.map(Number);
-    if (!arr.every(Number.isFinite)) return null;
+    return arr.every(Number.isFinite) ? (arr as BBoxArray) : null;
+  }
 
-    const [x1, y1, x2, y2] = arr;
-    const allIn01 = arr.every(v => v >= 0 && v <= 1);
-
-    if (allIn01) {
-      // Interpret as [x, y, w, h] if it fits within the unit square
-      if (x1 + x2 <= 1 && y1 + y2 <= 1) {
-        if (x2 <= 0 || y2 <= 0) return null;
-        return [clamp01(x1), clamp01(y1), clamp01(x2), clamp01(y2)];
-      }
-
-      // Otherwise treat as [x1, y1, x2, y2]
-      if (x2 > x1 && y2 > y1) {
-        const w = clamp01(x2 - x1);
-        const h = clamp01(y2 - y1);
-        if (w <= 0 || h <= 0) return null;
-        return [clamp01(x1), clamp01(y1), w, h];
-      }
-    }
-
-    // Not normalized (likely pixels) — reject here. The component guard will avoid mis-crops.
-    return null;
+  if (typeof b === "object" && b !== null) {
+    const arr = [b.xmin, b.ymin, b.xmax, b.ymax].map(Number);
+    return arr.every(Number.isFinite) ? (arr as BBoxArray) : null;
   }
 
   return null;
