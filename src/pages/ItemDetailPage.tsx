@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { normalizeBbox } from "@/lib/yolos";
 import { PALETTE } from "@/utils/color";
 import SmartCropImg from "@/components/SmartCropImg";
 import { Button } from "@/components/ui/button";
@@ -133,15 +134,16 @@ export default function ItemDetailPage() {
         nav("/");
         return;
       }
-      setItem(data as ItemRow);
-      setTitle(data.title ?? "");
-      setBrand(data.brand ?? "");
+      const normalized = { ...data, bbox: normalizeBbox(data.bbox) } as ItemRow;
+      setItem(normalized);
+      setTitle(normalized.title ?? "");
+      setBrand(normalized.brand ?? "");
       // Normalize category from database to match dropdown options
-      const normalizedCategory = data.category?.toLowerCase();
+      const normalizedCategory = normalized.category?.toLowerCase();
       setCategory(normalizedCategory || null);
-      setSubcategory(data.subcategory ?? null);
-      setColorName(data.color_name ?? null);
-      setColorHex(data.color_hex ?? null);
+      setSubcategory(normalized.subcategory ?? null);
+      setColorName(normalized.color_name ?? null);
+      setColorHex(normalized.color_hex ?? null);
 
       // signed image
       const { data: signed } = await supabase.storage
