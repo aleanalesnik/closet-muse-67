@@ -2,7 +2,7 @@ import React from "react";
 
 type Props = {
   src: string;
-  bbox?: number[] | null; // normalized [x1,y1,x2,y2] coordinates (0-1)
+  bbox?: number[] | null; // normalized [x,y,w,h] coordinates (0-1) from sila debugger
   paddingPct?: number;
   className?: string;
   alt?: string;
@@ -17,19 +17,13 @@ function toXYWH(b?: number[] | null): number[] | null {
   const arr = b.map(Number);
   if (!arr.every(Number.isFinite)) return null;
 
-  // Convert from [x1,y1,x2,y2] to [x,y,w,h] format
-  const [x1, y1, x2, y2] = arr;
+  // Sila debugger returns normalized [x,y,w,h] coordinates (0-1)
+  const [x, y, w, h] = arr;
   
   // Validate coordinates are normalized (0-1) and make sense
-  const validCoords = [x1, y1, x2, y2].every(v => v >= 0 && v <= 1) && x2 > x1 && y2 > y1;
+  const validCoords = [x, y, w, h].every(v => v >= 0 && v <= 1) && w > 0 && h > 0;
   if (!validCoords) return null;
 
-  // Convert to [x,y,w,h] format
-  const x = x1;
-  const y = y1;
-  const w = x2 - x1;
-  const h = y2 - y1;
-  
   // Ensure bbox doesn't exceed boundaries and has reasonable size
   if (w <= 0.01 || h <= 0.01) return null; // ignore tiny boxes
   
