@@ -113,12 +113,11 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         alt={alt}
         draggable={false}
         style={{
-          width: `${scale * 100}%`,
-          height: `${scale * 100}%`,
-          position: 'absolute',
-          left: `${translateX}%`,
-          top: `${translateY}%`,
-          objectFit: 'cover'
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          transform: `scale(${scale}) translate(${translateX / scale}%, ${translateY / scale}%)`,
+          transformOrigin: "0 0"
         }}
       />
     </div>
