@@ -2,7 +2,7 @@ import React from "react";
 
 type Props = {
   src: string;
-  bbox?: number[] | null; // may be [x,y,w,h] or [x1,y1,x2,y2], pixels or normalized
+  bbox?: number[] | null; // normalized [x1,y1,x2,y2] coordinates (0-1)
   paddingPct?: number;
   className?: string;
   alt?: string;
@@ -12,33 +12,28 @@ function clamp01(n: number) {
   return Math.min(1, Math.max(0, n));
 }
 
-function toXYWH(b?: number[] | null, iw?: number, ih?: number): number[] | null {
+function toXYWH(b?: number[] | null): number[] | null {
   if (!b || b.length !== 4) return null;
   const arr = b.map(Number);
   if (!arr.every(Number.isFinite)) return null;
 
-  // The AI model returns normalized [x, y, w, h] coordinates (0-1)
-  let [x, y, w, h] = arr;
+  // Convert from [x1,y1,x2,y2] to [x,y,w,h] format
+  const [x1, y1, x2, y2] = arr;
   
-  // Handle pixel coordinates if needed
-  if (Math.max(...arr) > 1) {
-    if (!iw || !ih) return null;
-    x /= iw; y /= ih; w /= iw; h /= ih;
-  }
-
-  // Validate normalized coordinates
-  const validCoords = [x, y, w, h].every(v => v >= 0 && v <= 1) && w > 0 && h > 0;
+  // Validate coordinates are normalized (0-1) and make sense
+  const validCoords = [x1, y1, x2, y2].every(v => v >= 0 && v <= 1) && x2 > x1 && y2 > y1;
   if (!validCoords) return null;
 
-  // Ensure bbox doesn't exceed image boundaries
-  const clampedX = clamp01(x);
-  const clampedY = clamp01(y);
-  const clampedW = clamp01(Math.min(w, 1 - clampedX));
-  const clampedH = clamp01(Math.min(h, 1 - clampedY));
+  // Convert to [x,y,w,h] format
+  const x = x1;
+  const y = y1;
+  const w = x2 - x1;
+  const h = y2 - y1;
   
-  if (clampedW <= 0.01 || clampedH <= 0.01) return null; // ignore tiny boxes
+  // Ensure bbox doesn't exceed boundaries and has reasonable size
+  if (w <= 0.01 || h <= 0.01) return null; // ignore tiny boxes
   
-  return [clampedX, clampedY, clampedW, clampedH];
+  return [x, y, w, h];
 }
 
 const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({ 
