@@ -71,10 +71,23 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     );
   }
 
-  // Simple approach: use object-position to center on the bounding box
+  // Apply smart cropping: zoom into the detected region
   const [x, y, w, h] = xywh;
-  const centerX = (x + w/2) * 100;
-  const centerY = (y + h/2) * 100;
+  
+  // Add padding around the detection
+  const paddedW = Math.min(1, w * (1 + paddingPct * 2));
+  const paddedH = Math.min(1, h * (1 + paddingPct * 2));
+  
+  // Calculate scale to fit the padded region in the container
+  const scale = Math.max(1 / paddedW, 1 / paddedH);
+  
+  // Calculate the center of the detection
+  const centerX = x + w / 2;
+  const centerY = y + h / 2;
+  
+  // Calculate translation to center the detection
+  const translateX = (0.5 - centerX) * 100;
+  const translateY = (0.5 - centerY) * 100;
   
   return (
     <div className={`relative overflow-hidden ${className}`}>
@@ -87,7 +100,8 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          objectPosition: `${centerX}% ${centerY}%`
+          transform: `scale(${scale}) translate(${translateX}%, ${translateY}%)`,
+          transformOrigin: "center center"
         }}
       />
     </div>
