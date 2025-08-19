@@ -44,13 +44,12 @@ type ItemRow = {
   yolos_top_labels?: string[] | null;
 };
 
-
 const CATEGORY_OPTIONS = [
   "accessory",
-  "bag", 
+  "bag",
   "bottoms", // changed to plural to match AI detection
   "dress",
-  "outerwear", 
+  "outerwear",
   "shoes",
   "tops", // changed to plural to match AI detection
 ] as const;
@@ -58,7 +57,7 @@ const CATEGORY_OPTIONS = [
 const SUBCATS: Record<(typeof CATEGORY_OPTIONS)[number], string[]> = {
   accessory: [
     "belt",
-    "hat", 
+    "hat",
     "cap",
     "beanie",
     "scarf",
@@ -71,9 +70,10 @@ const SUBCATS: Record<(typeof CATEGORY_OPTIONS)[number], string[]> = {
   dress: ["dress"],
   outerwear: ["jacket", "blazer", "coat", "cardigan", "hoodie"],
   shoes: ["sneakers", "boots", "heels", "loafers", "sandals"],
-  tops: [ // updated key to plural
+  tops: [
+    // updated key to plural
     "t-shirt",
-    "shirt", 
+    "shirt",
     "blouse",
     "sweater",
     "tank top",
@@ -106,7 +106,6 @@ export default function ItemDetailPage() {
     return SUBCATS[key] ?? [];
   }, [category]);
 
-
   useEffect(() => {
     (async () => {
       // load item
@@ -134,15 +133,16 @@ export default function ItemDetailPage() {
         nav("/");
         return;
       }
-      setItem(data as ItemRow);
-      setTitle(data.title ?? "");
-      setBrand(data.brand ?? "");
+      const normalized = { ...data, bbox: normalizeBbox(data.bbox) } as ItemRow;
+      setItem(normalized);
+      setTitle(normalized.title ?? "");
+      setBrand(normalized.brand ?? "");
       // Normalize category from database to match dropdown options
-      const normalizedCategory = data.category?.toLowerCase();
+      const normalizedCategory = normalized.category?.toLowerCase();
       setCategory(normalizedCategory || null);
-      setSubcategory(data.subcategory ?? null);
-      setColorName(data.color_name ?? null);
-      setColorHex(data.color_hex ?? null);
+      setSubcategory(normalized.subcategory ?? null);
+      setColorName(normalized.color_name ?? null);
+      setColorHex(normalized.color_hex ?? null);
 
       // signed image
       const { data: signed } = await supabase.storage
@@ -151,7 +151,6 @@ export default function ItemDetailPage() {
       if (signed?.signedUrl) setImageUrl(signed.signedUrl);
     })();
   }, [id]);
-
 
   // if user picks a color swatch
   function pickColor(name: string, hex: string) {
@@ -200,7 +199,9 @@ export default function ItemDetailPage() {
         .eq("owner", item.owner);
       if (error) throw error;
       // optional: also remove derived files if you store them
-      // await supabase.storage.from("sila").remove([item.image_path, item.mask_path, item.crop_path].filter(Boolean) as string[]);
+      // await supabase.storage
+      //   .from("sila")
+      //   .remove([item.image_path, item.mask_path, item.crop_path].filter(Boolean) as string[]);
       toast({
         title: "Deleted",
         description: "Item removed from your closet.",
@@ -253,7 +254,7 @@ export default function ItemDetailPage() {
               bbox={item.bbox as any}
               alt={title || "item"}
               className="w-full h-full"
-              paddingPct={0.10}
+              paddingPct={0.1}
             />
           ) : (
             <div className="text-sm text-muted-foreground">No image</div>
