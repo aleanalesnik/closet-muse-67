@@ -10,10 +10,26 @@ type Props = {
 
 function toXYWH(b?: number[] | null): number[] | null {
   if (!b || b.length !== 4) return null;
-  const [x, y, w, h] = b.map(Number);
-  // If it looks normalized, trust it's already [x,y,w,h]
-  const allIn01 = [x, y, w, h].every(v => v >= 0 && v <= 1);
-  if (allIn01 && w > 0 && h > 0) return [x, y, w, h];
+  const arr = b.map(Number);
+  if (!arr.every(Number.isFinite)) return null;
+
+  const [x1, y1, x2, y2] = arr;
+  const in01 = arr.every(v => v >= 0 && v <= 1);
+
+  if (in01) {
+    // If the values look like [x, y, w, h] and fit within the unit square
+    if (x1 + x2 <= 1 && y1 + y2 <= 1) {
+      if (x2 > 0 && y2 > 0) return [x1, y1, x2, y2];
+      return null;
+    }
+
+    // Otherwise treat as [x1, y1, x2, y2]
+    if (x2 > x1 && y2 > y1) {
+      const w = x2 - x1;
+      const h = y2 - y1;
+      if (w > 0 && h > 0) return [x1, y1, w, h];
+    }
+  }
 
   // Anything else (pixels or malformed) -> ignore to prevent snap
   return null;
