@@ -50,13 +50,26 @@ export function normalizeBbox(b: any): NormBbox | null {
 
   // Array form
   if (Array.isArray(b) && b.length === 4) {
-    const [x, y, w, h] = b.map(Number);
-    if (![x, y, w, h].every(Number.isFinite)) return null;
+    const arr = b.map(Number);
+    if (!arr.every(Number.isFinite)) return null;
 
-    const allIn01 = [x, y, w, h].every(v => v >= 0 && v <= 1);
+    const [x1, y1, x2, y2] = arr;
+    const allIn01 = arr.every(v => v >= 0 && v <= 1);
+
     if (allIn01) {
-      if (w <= 0 || h <= 0) return null;
-      return [clamp01(x), clamp01(y), clamp01(w), clamp01(h)];
+      // Interpret as [x, y, w, h] if it fits within the unit square
+      if (x1 + x2 <= 1 && y1 + y2 <= 1) {
+        if (x2 <= 0 || y2 <= 0) return null;
+        return [clamp01(x1), clamp01(y1), clamp01(x2), clamp01(y2)];
+      }
+
+      // Otherwise treat as [x1, y1, x2, y2]
+      if (x2 > x1 && y2 > y1) {
+        const w = clamp01(x2 - x1);
+        const h = clamp01(y2 - y1);
+        if (w <= 0 || h <= 0) return null;
+        return [clamp01(x1), clamp01(y1), w, h];
+      }
     }
 
     // Not normalized (likely pixels) — reject here. The component guard will avoid mis-crops.
