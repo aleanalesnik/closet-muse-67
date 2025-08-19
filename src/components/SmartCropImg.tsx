@@ -76,40 +76,33 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     );
   }
 
-  // Apply smart cropping with scale and translate
+  // Apply smart cropping with positioning and scaling
   const [x, y, w, h] = xywh;
   
   console.log('[SmartCrop] Applying smart crop with bbox:', { x, y, w, h });
   
   // Add padding to the detection area
-  const paddedW = Math.min(1, w + (w * paddingPct * 2));
-  const paddedH = Math.min(1, h + (h * paddingPct * 2));
-  const paddedX = Math.max(0, x - (paddedW - w) / 2);
-  const paddedY = Math.max(0, y - (paddedH - h) / 2);
+  const padding = paddingPct;
+  const paddedX = Math.max(0, x - w * padding);
+  const paddedY = Math.max(0, y - h * padding);
+  const paddedW = Math.min(1 - paddedX, w * (1 + padding * 2));
+  const paddedH = Math.min(1 - paddedY, h * (1 + padding * 2));
   
-  // Calculate scale factor to make the padded bbox fill the container
-  // Use the smaller scale to ensure the entire area fits
+  // Calculate scale to zoom into the padded region
   const scaleX = 1 / paddedW;
   const scaleY = 1 / paddedH;
-  const scale = Math.min(scaleX, scaleY);
+  const scale = Math.max(scaleX, scaleY); // Use max to ensure full coverage
   
-  // Calculate center points
-  const bboxCenterX = paddedX + paddedW / 2;
-  const bboxCenterY = paddedY + paddedH / 2;
-  
-  // Calculate translation to center the bbox in the container
-  // After scaling, we need to translate so bbox center becomes container center (50%)
-  const translateX = (0.5 - bboxCenterX) * scale * 100;
-  const translateY = (0.5 - bboxCenterY) * scale * 100;
+  // Calculate position to center the cropped area
+  const translateX = -paddedX * 100;
+  const translateY = -paddedY * 100;
   
   console.log('[SmartCrop] Transform values:', { 
-    scale, 
-    translateX, 
-    translateY,
-    paddedW,
-    paddedH,
-    bboxCenterX,
-    bboxCenterY
+    scale: scale.toFixed(2), 
+    translateX: translateX.toFixed(2), 
+    translateY: translateY.toFixed(2),
+    paddedW: paddedW.toFixed(3),
+    paddedH: paddedH.toFixed(3)
   });
   
   return (
@@ -120,11 +113,12 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         alt={alt}
         draggable={false}
         style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          transform: `scale(${scale}) translate(${translateX}%, ${translateY}%)`,
-          transformOrigin: "center center"
+          width: `${scale * 100}%`,
+          height: `${scale * 100}%`,
+          position: 'absolute',
+          left: `${translateX}%`,
+          top: `${translateY}%`,
+          objectFit: 'cover'
         }}
       />
     </div>
