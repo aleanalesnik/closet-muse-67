@@ -37,7 +37,7 @@ type ReqBody = {
 // --- Env (required) ---
 const HF_ENDPOINT_URL = Deno.env.get("HF_ENDPOINT_URL") ?? "";
 const HF_TOKEN        = Deno.env.get("HF_TOKEN") ?? "";
-const HF_CLIP_MODEL   = Deno.env.get("HF_CLIP_MODEL") ?? "openai/clip-vit-large-patch14";
+const HF_CLIP_MODEL   = Deno.env.get("HF_CLIP_MODEL") ?? "openai/clip-vit-base-patch32";
 const HF_GDINO_MODEL  = Deno.env.get("HF_GDINO_MODEL") ?? "IDEA-Research/grounding-dino-tiny";
 
 // --- Env (tunable knobs learned from your tests; safe defaults) ---

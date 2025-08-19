@@ -13,6 +13,7 @@ function clamp01(n: number) {
 }
 
 function toXYWH(b?: number[] | null, iw?: number, ih?: number): number[] | null {
+  console.log("[SmartCrop] toXYWH input:", { b, iw, ih });
   if (!b || b.length !== 4) return null;
   const arr = b.map(Number);
   if (!arr.every(Number.isFinite)) return null;
@@ -89,6 +90,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         return;
       }
 
+      console.log("[SmartCrop] Processing bbox:", { bbox, iw, ih, cw, ch, src: src.slice(-20) });
       const safe = toXYWH(bbox as any, iw, ih);
       if (!safe) {
         // Only warn if a bbox was present but couldn't be parsed
