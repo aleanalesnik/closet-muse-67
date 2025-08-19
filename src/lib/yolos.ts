@@ -14,6 +14,8 @@ export type EdgeResponse = {
   bbox: BBoxArray | null;      // <-- TRUST THIS (already [x,y,w,h])
   proposedTitle?: string | null;
   colorName?: string | null;
+  colorHex?: string | null;
+  yolosTopLabels?: string[] | null;
   result?: EdgeDet[];         // <-- optional detector results
 };
 
