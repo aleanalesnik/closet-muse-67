@@ -92,32 +92,41 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
 
       const [x, y, w, h] = safe;
 
-      // Effective box used for scaling (padding logic)
-      let effW = w, effH = h;
       if (mode === "fit") {
-        const pad = 1 + paddingPct;            // expand => less zoom (more breathing room)
-        effW = Math.min(1, w * pad);
-        effH = Math.min(1, h * pad);
+        // center the subject but keep the entire image visible and undistorted
+        const cx = (x + w / 2) * 100;
+        const cy = (y + h / 2) * 100;
+
+        setStyle({
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          objectPosition: `${cx}% ${cy}%`, // aim the subject at the center
+          display: "block",
+          opacity: 1
+        });
+        return; // IMPORTANT: skip all the scale/translate math below
+      }
+
+      // Effective box used for scaling (padding logic) - only for "fill" mode
+      let effW = w, effH = h;
+      
+      // "fill" mode
+      if (typeof strength === "number") {
+        const s = clamp01(strength);
+        effW = Math.max(0.01, w * s);
+        effH = Math.max(0.01, h * s);
       } else {
-        // "fill"
-        if (typeof strength === "number") {
-          const s = clamp01(strength);
-          effW = Math.max(0.01, w * s);
-          effH = Math.max(0.01, h * s);
-        } else {
-          const pad = Math.max(0.01, 1 - paddingPct); // shrink => more zoom
-          effW = Math.max(0.01, w * pad);
-          effH = Math.max(0.01, h * pad);
-        }
+        const pad = Math.max(0.01, 1 - paddingPct); // shrink => more zoom
+        effW = Math.max(0.01, w * pad);
+        effH = Math.max(0.01, h * pad);
       }
 
       const bboxWpx = effW * iw;
       const bboxHpx = effH * ih;
 
-      // Fit = keep entire bbox visible. Fill = zoom so bbox dominates.
-      const scale = (mode === "fill")
-        ? Math.max(cw / bboxWpx, ch / bboxHpx)
-        : Math.min(cw / bboxWpx, ch / bboxHpx);
+      // Fill mode: zoom so bbox dominates.
+      const scale = Math.max(cw / bboxWpx, ch / bboxHpx);
 
       const scaledW = iw * scale;
       const scaledH = ih * scale;
