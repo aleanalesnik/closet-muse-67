@@ -71,23 +71,41 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     );
   }
 
-  // Apply smart cropping: zoom into the detected region
+  // Smart composition: use bounding box as a guide, not a literal crop target
   const [x, y, w, h] = xywh;
   
-  // Add padding around the detection
-  const paddedW = Math.min(1, w * (1 + paddingPct * 2));
-  const paddedH = Math.min(1, h * (1 + paddingPct * 2));
-  
-  // Calculate scale to fit the padded region in the container
-  const scale = Math.max(1 / paddedW, 1 / paddedH);
-  
-  // Calculate the center of the detection
+  // Calculate the center of the detected item
   const centerX = x + w / 2;
   const centerY = y + h / 2;
   
-  // Calculate translation to center the detection
-  const translateX = (0.5 - centerX) * 100;
-  const translateY = (0.5 - centerY) * 100;
+  // Analyze the bounding box to determine crop strategy
+  const bboxArea = w * h;
+  const isSmallItem = bboxArea < 0.15; // Accessories, small items
+  const isLargeItem = bboxArea > 0.6;  // Full body shots
+  
+  let scale = 1;
+  let cropCenterX = centerX;
+  let cropCenterY = centerY;
+  
+  if (isSmallItem) {
+    // For small items (bags, accessories), zoom in moderately
+    scale = 1.8;
+  } else if (isLargeItem) {
+    // For large items (full outfits), minimal zoom - just center
+    scale = 1.1;
+  } else {
+    // For medium items (typical clothing), moderate crop
+    scale = 1.4;
+  }
+  
+  // Ensure we don't crop too much from edges
+  const margin = 0.1; // 10% margin from edges
+  cropCenterX = Math.max(margin, Math.min(1 - margin, cropCenterX));
+  cropCenterY = Math.max(margin, Math.min(1 - margin, cropCenterY));
+  
+  // Calculate final positioning
+  const translateX = (0.5 - cropCenterX) * 100;
+  const translateY = (0.5 - cropCenterY) * 100;
   
   return (
     <div className={`relative overflow-hidden ${className}`}>
