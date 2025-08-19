@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
-import { waitUntilPublic, analyzeImage, normalizeBbox } from '@/lib/yolos';
+import { waitUntilPublic, analyzeImage } from '@/lib/yolos';
+import { getDominantColor, snapToPalette } from '@/lib/color';
 import SmartCropImg from '@/components/SmartCropImg';
 import ItemCard from '@/components/ItemCard';
 import { Button } from '@/components/ui/button';
@@ -86,7 +87,7 @@ export default function Closet({ user }: ClosetProps) {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      const itemsData = (data || []).map(it => ({ ...it, bbox: normalizeBbox(it.bbox) }));
+      const itemsData = data || [];
       setItems(itemsData);
 
 
@@ -114,7 +115,7 @@ export default function Closet({ user }: ClosetProps) {
     const uploadingId = crypto.randomUUID();
     // Create preview and add to uploading items
     
-    // Add to uploading items immediately (in grid position)
+   // Add to uploading items immediately (in grid position)
     const uploadingItem: UploadingItem = {
       id: uploadingId,
       file,
@@ -122,12 +123,23 @@ export default function Closet({ user }: ClosetProps) {
       status: 'uploading',
       title: file.name.replace(/\.[^/.]+$/, "")
     };
-    
+
     setUploadingItems(prev => [uploadingItem, ...prev]);
-    
-    
+
     try {
       console.log('[YOLOS] Starting upload:', file.name);
+
+      // Detect dominant color from the preview image
+      let detectedColorName: string | null = null;
+      let detectedColorHex: string | null = null;
+      try {
+        const rgb = await getDominantColor(preview);
+        const snapped = snapToPalette(rgb);
+        detectedColorName = snapped.name;
+        detectedColorHex = snapped.hex;
+      } catch (colorErr) {
+        console.warn('Color detection failed', colorErr);
+      }
       
       // Upload to storage
       const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
@@ -155,8 +167,8 @@ export default function Closet({ user }: ClosetProps) {
           title: "Uploading…",
           image_path: imagePath,
           category: null,
-          color_name: null,
-          color_hex: null,
+          color_name: detectedColorName,
+          color_hex: detectedColorHex,
         })
         .select()
         .single();
@@ -200,8 +212,8 @@ export default function Closet({ user }: ClosetProps) {
       const payload = {
         title: analysis.proposedTitle ?? "Item",
         category: analysis.category,          // <-- use edge category
-        subcategory: null,                    // Phase 1 will fill this later
-        color_hex: analysis.colorHex ?? null,
+        color_hex: analysis.colorHex ?? detectedColorHex,
+        color_name: analysis.colorName ?? detectedColorName,
         color_name: analysis.colorName ?? null,
         bbox: analysis.bbox,                  // <-- save [x,y,w,h]
         yolos_top_labels: analysis.yolosTopLabels ?? null,
