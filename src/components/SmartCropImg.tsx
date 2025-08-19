@@ -2,41 +2,21 @@ import React from "react";
 
 type Props = {
   src: string;
-  /** [x,y,w,h] (0–1, %, or pixels) OR [x1,y1,x2,y2] */
+  /** [x,y,w,h] (0–1, %, or px) OR [x1,y1,x2,y2] */
   bbox?: number[] | null;
   className?: string;
   alt?: string;
-
-  /**
-   * Keep entire bbox visible ("fit") or zoom to make bbox dominate ("fill").
-   * Default is "fit" to match your design mocks (full item visible, slight padding).
-   */
-  mode?: "fit" | "fill";
-
-  /**
-   * Margin around the bbox.
-   * - In "fit" mode: expands the effective box (less zoom) → padding around the item.
-   * - In "fill" mode: shrinks the effective box (more zoom) → tighter crop.
-   * Default 0.10 (10%).
-   *
-   * NOTE: This prop exists for backward compatibility with your call sites.
-   */
-  paddingPct?: number;
-
-  /**
-   * Optional alternative to padding for "fill" strength (0–1).
-   * When provided and mode="fill", we shrink the effective box by `strength`.
-   * e.g., 0.80 means the bbox fills ~80% of the card on each axis (strong crop).
-   * Ignored in "fit" mode. If omitted, we fall back to paddingPct behavior.
-   */
+  /** Keep entire bbox visible (your desired grid look) */
+  mode?: "fit" | "fill";       // default "fit"
+  /** Padding around the bbox (fit: expand box; fill: shrink box) */
+  paddingPct?: number;         // default 0.10
+  /** Optional fill strength; ignored in "fit" mode */
   strength?: number;
 };
 
-function clamp01(n: number) {
-  return Math.min(1, Math.max(0, n));
-}
+const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
-/** Normalize to [x,y,w,h] in unit space (0–1). */
+/** Normalize to [x,y,w,h] in unit space (0–1). Prefer XYWH; fallback XYXY only if XYWH impossible. */
 function toXYWH(
   b?: number[] | null,
   iw?: number,
@@ -44,52 +24,30 @@ function toXYWH(
 ): [number, number, number, number] | null {
   if (!b || b.length !== 4) return null;
   let [a, b1, c, d] = b.map(Number);
-  if (![a,b1,c,d].every(Number.isFinite)) return null;
+  if (![a, b1, c, d].every(Number.isFinite)) return null;
 
-  // Normalize % or pixel → unit
-  const max = Math.max(a,b1,c,d);
+  const max = Math.max(a, b1, c, d);
   if (max > 1) {
     if (max <= 100) { a/=100; b1/=100; c/=100; d/=100; }
-    else {
-      if (!iw || !ih) return null;
-      a/=iw; b1/=ih; c/=iw; d/=ih;
-    }
+    else { if (!iw || !ih) return null; a/=iw; b1/=ih; c/=iw; d/=ih; }
   }
-  
-  // First, treat as XYWH (what your edge returns)
+
+  // Try XYWH first (what your edge returns)
   const x = a, y = b1, w = c, h = d;
-  const xywhValid =
-    x >= 0 && y >= 0 && w > 0 && h > 0 &&
-    x + w <= 1.00001 && y + h <= 1.00001;
+  const xywhValid = x >= 0 && y >= 0 && w > 0 && h > 0 && x + w <= 1.00001 && y + h <= 1.00001;
+  if (xywhValid) return [clamp01(x), clamp01(y), clamp01(w), clamp01(h)];
 
-  if (xywhValid) {
-    return [clamp01(x), clamp01(y), clamp01(w), clamp01(h)];
-  }
-
-  // If XYWH is impossible, try XYXY
+  // Fallback: XYXY
   const x1 = a, y1 = b1, x2 = c, y2 = d;
   const w2 = x2 - x1, h2 = y2 - y1;
-  const xyxyValid =
-    x1 >= 0 && y1 >= 0 && x2 <= 1 && y2 <= 1 &&
-    w2 > 0 && h2 > 0;
-
-  if (xyxyValid) {
-    return [clamp01(x1), clamp01(y1), clamp01(w2), clamp01(h2)];
-  }
+  const xyxyValid = x1 >= 0 && y1 >= 0 && x2 <= 1 && y2 <= 1 && w2 > 0 && h2 > 0;
+  if (xyxyValid) return [clamp01(x1), clamp01(y1), clamp01(w2), clamp01(h2)];
 
   return null;
 }
 
 const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCropImg(
-  {
-    src,
-    bbox,
-    className = "",
-    alt = "",
-    mode = "fit",
-    paddingPct = 0.10,
-    strength, // optional
-  },
+  { src, bbox, className = "", alt = "", mode = "fit", paddingPct = 0.10, strength },
   ref
 ) {
   const imgRef = React.useRef<HTMLImageElement>(null);
@@ -106,6 +64,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
     if (!img) return;
 
     let rafId = 0;
+    const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
     function apply() {
       const parent = img.parentElement!;
@@ -117,11 +76,9 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
       const ih = img.naturalHeight || 0;
       if (!cw || !ch || !iw || !ih) return;
 
-      const norm = toXYWH(bbox as any, iw, ih);
-      if (!norm) {
-        if (bbox != null) {
-          console.warn("[SmartCrop] bbox present but invalid", { bbox, iw, ih, cw, ch, src });
-        }
+      const safe = toXYWH(bbox as any, iw, ih);
+      if (!safe) {
+        if (bbox != null) console.warn("[SmartCrop] bbox present but invalid", { bbox, iw, ih, cw, ch, src });
         setStyle({
           width: "100%",
           height: "100%",
@@ -133,32 +90,22 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
         return;
       }
 
-      const [x, y, w, h] = norm;
+      const [x, y, w, h] = safe;
 
-      // Debug logging for edge cases
-      if (w*h > 0.9 || w*h < 0.02 || x < 0 || y < 0 || x+w > 1 || y+h > 1) {
-        console.info("[SmartCrop] edge-case bbox", { x, y, w, h, area: w*h, src });
-      }
-
-      // Compute effective box used for scaling
-      let effW = w;
-      let effH = h;
-
+      // Effective box used for scaling (padding logic)
+      let effW = w, effH = h;
       if (mode === "fit") {
-        // expand box by paddingPct → more margin, less zoom
-        const pad = 1 + paddingPct;
+        const pad = 1 + paddingPct;            // expand => less zoom (more breathing room)
         effW = Math.min(1, w * pad);
         effH = Math.min(1, h * pad);
       } else {
-        // mode === "fill"
+        // "fill"
         if (typeof strength === "number") {
-          // shrink box by strength → more zoom
-          const s = Math.max(0.01, Math.min(1, strength));
+          const s = clamp01(strength);
           effW = Math.max(0.01, w * s);
           effH = Math.max(0.01, h * s);
         } else {
-          // fallback: use paddingPct to shrink
-          const pad = Math.max(0.01, 1 - paddingPct);
+          const pad = Math.max(0.01, 1 - paddingPct); // shrink => more zoom
           effW = Math.max(0.01, w * pad);
           effH = Math.max(0.01, h * pad);
         }
@@ -167,11 +114,10 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
       const bboxWpx = effW * iw;
       const bboxHpx = effH * ih;
 
-      // Fit uses MIN (keep fully visible). Fill uses MAX (zoom to dominate).
-      const scale =
-        mode === "fit"
-          ? Math.min(cw / bboxWpx, ch / bboxHpx)
-          : Math.max(cw / bboxWpx, ch / bboxHpx);
+      // Fit = keep entire bbox visible. Fill = zoom so bbox dominates.
+      const scale = (mode === "fill")
+        ? Math.max(cw / bboxWpx, ch / bboxHpx)
+        : Math.min(cw / bboxWpx, ch / bboxHpx);
 
       const scaledW = iw * scale;
       const scaledH = ih * scale;
@@ -182,14 +128,35 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
       const bboxCx = (x + w / 2) * iw * scale;
       const bboxCy = (y + h / 2) * ih * scale;
 
+      // Raw offsets to center the bbox
       const offsetX = targetCx - bboxCx;
       const offsetY = targetCy - bboxCy;
+
+      // *** Critical fix: clamp translate so the image can't slide out of view ***
+      const tx = clamp(offsetX, cw - scaledW, 0);
+      const ty = clamp(offsetY, ch - scaledH, 0);
+
+      // Safety fallback: if intersection area is ~0 (somehow), center the whole image.
+      const visibleW = Math.max(0, Math.min(cw, Math.min(cw - tx, scaledW)));
+      const visibleH = Math.max(0, Math.min(ch, Math.min(ch - ty, scaledH)));
+      const visibleArea = visibleW * visibleH;
+      if (visibleArea < 1) {
+        setStyle({
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          objectPosition: `${(x + w / 2) * 100}% ${(y + h / 2) * 100}%`,
+          display: "block",
+          opacity: 1,
+        });
+        return;
+      }
 
       setStyle({
         width: scaledW,
         height: scaledH,
         position: "absolute",
-        transform: `translate(${offsetX}px, ${offsetY}px)`,
+        transform: `translate(${tx}px, ${ty}px)`,
         transformOrigin: "0 0",
         willChange: "transform",
         objectFit: "fill",
@@ -198,16 +165,8 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
       });
     }
 
-    const schedule = () => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(apply);
-    };
-
-    const onLoad = () => {
-      // Safari reflow quirk
-      img.offsetHeight;
-      schedule();
-    };
+    const schedule = () => { cancelAnimationFrame(rafId); rafId = requestAnimationFrame(apply); };
+    const onLoad = () => { img.offsetHeight; schedule(); }; // Safari reflow quirk
     const onError = () => setStyle(s => ({ ...s, opacity: 1 }));
 
     img.addEventListener("load", onLoad);
