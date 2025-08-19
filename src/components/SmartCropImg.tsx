@@ -43,35 +43,39 @@ function toXYWH(
   ih?: number
 ): [number, number, number, number] | null {
   if (!b || b.length !== 4) return null;
-  const arr = b.map(Number);
-  if (!arr.every(Number.isFinite)) return null;
+  let [a, b1, c, d] = b.map(Number);
+  if (![a,b1,c,d].every(Number.isFinite)) return null;
 
-  let [a, b1, c, d] = arr;
-  const max = Math.max(...arr);
-
-  // Convert % or pixel space to unit space
+  // Normalize % or pixel → unit
+  const max = Math.max(a,b1,c,d);
   if (max > 1) {
-    if (max <= 100) {
-      a /= 100; b1 /= 100; c /= 100; d /= 100;
-    } else {
+    if (max <= 100) { a/=100; b1/=100; c/=100; d/=100; }
+    else {
       if (!iw || !ih) return null;
-      a /= iw; b1 /= ih; c /= iw; d /= ih;
+      a/=iw; b1/=ih; c/=iw; d/=ih;
     }
   }
+  
+  // First, treat as XYWH (what your edge returns)
+  const x = a, y = b1, w = c, h = d;
+  const xywhValid =
+    x >= 0 && y >= 0 && w > 0 && h > 0 &&
+    x + w <= 1.00001 && y + h <= 1.00001;
 
-  if ([a, b1, c, d].some(v => v < 0 || v > 1)) return null;
-
-  // Prefer [x,y,w,h] if sums stay within bounds
-  if (a + c <= 1 && b1 + d <= 1) {
-    const x = clamp01(a), y = clamp01(b1), w = clamp01(c), h = clamp01(d);
-    if (w > 0 && h > 0) return [x, y, w, h];
+  if (xywhValid) {
+    return [clamp01(x), clamp01(y), clamp01(w), clamp01(h)];
   }
 
-  // Otherwise treat as [x1,y1,x2,y2]
+  // If XYWH is impossible, try XYXY
   const x1 = a, y1 = b1, x2 = c, y2 = d;
-  const w = clamp01(x2 - x1);
-  const h = clamp01(y2 - y1);
-  if (w > 0 && h > 0) return [clamp01(x1), clamp01(y1), w, h];
+  const w2 = x2 - x1, h2 = y2 - y1;
+  const xyxyValid =
+    x1 >= 0 && y1 >= 0 && x2 <= 1 && y2 <= 1 &&
+    w2 > 0 && h2 > 0;
+
+  if (xyxyValid) {
+    return [clamp01(x1), clamp01(y1), clamp01(w2), clamp01(h2)];
+  }
 
   return null;
 }
@@ -130,6 +134,11 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
       }
 
       const [x, y, w, h] = norm;
+
+      // Debug logging for edge cases
+      if (w*h > 0.9 || w*h < 0.02 || x < 0 || y < 0 || x+w > 1 || y+h > 1) {
+        console.info("[SmartCrop] edge-case bbox", { x, y, w, h, area: w*h, src });
+      }
 
       // Compute effective box used for scaling
       let effW = w;
