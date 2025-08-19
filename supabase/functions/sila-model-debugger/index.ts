@@ -1,17 +1,17 @@
 // supabase/functions/sila-model-debugger/index.ts
-// YOLOS (bbox) + CLIP (category) + optional Grounding-DINO fallback
+// YOLOS (bbox) + CLIP (coarse family tie-breaker) + optional Grounding-DINO fallback
+// Returns normalized boxes in [x, y, w, h] (0..1)
 
-// --- Hard-coded Build Tag ---
-const BUILD = "sila-debugger-2025-08-17c";  // <-- update & redeploy when needed
+const BUILD = "sila-debugger-2025-08-18f"; // update when redeploying
 
-// --- Simple CORS helper ---
+// --- CORS ---
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// --- JSON helper with headers ---
+// --- JSON helper ---
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -23,61 +23,72 @@ function json(data: unknown, status = 200) {
   });
 }
 
+// --- Types ---
 type HFBox = { xmin: number; ymin: number; xmax: number; ymax: number };
 type HFPred = { score: number; label: string; box: HFBox };
 type HFPayload = { inputs: string; parameters?: { threshold?: number } };
 
 type ReqBody = {
-  imageUrl?: string;  // public URL of the image
-  base64Image?: string;
-  threshold?: number; // optional first-pass threshold (default 0.12)
+  imageUrl?: string;    // public URL of the image
+  base64Image?: string; // data URL
+  threshold?: number;   // default 0.12
 };
 
+// --- Env (required) ---
 const HF_ENDPOINT_URL = Deno.env.get("HF_ENDPOINT_URL") ?? "";
-const HF_TOKEN = Deno.env.get("HF_TOKEN") ?? "";
-const HF_CLIP_MODEL = Deno.env.get("HF_CLIP_MODEL") ?? "openai/clip-vit-large-patch14";
-const HF_GDINO_MODEL = Deno.env.get("HF_GDINO_MODEL") ?? "IDEA-Research/grounding-dino-tiny";
+const HF_TOKEN        = Deno.env.get("HF_TOKEN") ?? "";
+const HF_CLIP_MODEL   = Deno.env.get("HF_CLIP_MODEL") ?? "openai/clip-vit-large-patch14";
+const HF_GDINO_MODEL  = Deno.env.get("HF_GDINO_MODEL") ?? "IDEA-Research/grounding-dino-tiny";
 
+// --- Env (tunable knobs learned from your tests; safe defaults) ---
+const VOTE_MIN_SCORE     = Number(Deno.env.get("VOTE_MIN_SCORE") ?? 0.20);
+const SMALL_FAMILY_BOOST = Number(Deno.env.get("SMALL_FAMILY_BOOST") ?? 1.35);
+const BAG_FORCE_MIN      = Number(Deno.env.get("BAG_FORCE_MIN") ?? 0.18);
+const SHOE_FORCE_MIN     = Number(Deno.env.get("SHOE_FORCE_MIN") ?? 0.18);
+
+// --- Helpers ---
 function isBox(b?: any): b is HFBox {
   return b && Number.isFinite(b.xmin) && Number.isFinite(b.ymin) && Number.isFinite(b.xmax) && Number.isFinite(b.ymax);
 }
 
-// Labels coming from Fashionpedia
+// Fashionpedia "part" labels we ignore for primary garment
 const PART_LABELS = new Set([
   "hood","collar","lapel","epaulette","sleeve","pocket","neckline","buckle","zipper",
   "applique","bead","bow","flower","fringe","ribbon","rivet","ruffle","sequin","tassel"
 ]);
 
+// Map raw YOLOS label to coarse family (tokenized alias table)
 function mapLabelToCategory(label: string): string | null {
-  const L = label.toLowerCase();
-
+  const L = label.toLowerCase().trim();
   if (PART_LABELS.has(L)) return null;
 
-  if (L.includes("dress") || L.includes("jumpsuit")) return "Dress";
-  if (L.includes("skirt") || L.includes("pants") || L.includes("shorts")) return "Bottoms";
+  // split composite labels like "shirt, blouse"
+  const tokens = L.split(/[,\-/]/).map(s => s.trim());
 
-  if (
-    L.includes("shirt, blouse") || L.includes("top, t-shirt, sweatshirt") ||
-    L.includes("sweater") || L.includes("cardigan") || L.includes("vest")
-  ) return "Tops";
+  const CATEGORY_ALIASES: Record<string, string[]> = {
+    Dress: ["dress","jumpsuit","romper"],
+    Bottoms: ["skirt","pants","jeans","trousers","shorts","leggings","culottes"],
+    Tops: ["shirt","blouse","top","t-shirt","tee","sweatshirt","sweater","cardigan","polo","vest","hoodie","bodysuit","tank"],
+    Outerwear: ["jacket","coat","trench","puffer","parka","blazer","cape"],
+    Shoes: ["shoe","sneaker","boot","heel","flat","sandal","loafer","mule","clog","ballet"],
+    Bags: ["bag","handbag","tote","shoulder","crossbody","clutch","wallet","satchel","hobo","backpack","mini bag"],
+    Accessories: ["belt","glove","scarf","umbrella","glasses","sunglasses","hat","beanie","tie","watch","headband","tights","stockings","sock","leg warmer","jewelry"],
+  };
 
-  if (L.includes("jacket") || L.includes("coat") || L.includes("cape")) return "Outerwear";
-  if (L.includes("shoe")) return "Shoes";
-  if (L.includes("bag, wallet")) return "Bags";
-
-  if (
-    L.includes("belt") || L.includes("glove") || L.includes("scarf") || L.includes("umbrella") ||
-    L.includes("glasses") || L.includes("hat") || L.includes("tie") ||
-    L.includes("leg warmer") || L.includes("tights, stockings") || L.includes("sock")
-  ) return "Accessory";
-
+  for (const [cat, aliases] of Object.entries(CATEGORY_ALIASES)) {
+    if (tokens.some(tok => aliases.some(a => tok.includes(a)))) return cat;
+  }
+  if (tokens.some(t => t.includes("cape"))) return "Outerwear";
+  if (tokens.some(t => t.includes("bag") || t.includes("wallet"))) return "Bags";
   return "Clothing";
 }
 
+// Normalize any bbox (xyxy in pixels or normalized) to normalized [x, y, w, h]
 function toNormBox(b: any, imgW?: number, imgH?: number): [number,number,number,number] | null {
   if (!b) return null;
   const arr = Array.isArray(b) ? b : [b.xmin, b.ymin, b.xmax, b.ymax];
   if (!arr || arr.length !== 4) return null;
+
   let [x1, y1, x2, y2] = arr.map(Number);
   if (![x1,y1,x2,y2].every(Number.isFinite)) return null;
 
@@ -87,6 +98,7 @@ function toNormBox(b: any, imgW?: number, imgH?: number): [number,number,number,
     x1 /= imgW; x2 /= imgW; y1 /= imgH; y2 /= imgH;
   }
 
+  // guard degenerate/placeholder
   if (x1 === 1 && y1 === 1 && x2 === 1 && y2 === 1) return null;
 
   const clamp = (v:number) => Math.min(1, Math.max(0, v));
@@ -96,11 +108,11 @@ function toNormBox(b: any, imgW?: number, imgH?: number): [number,number,number,
   const ny2 = clamp(Math.max(y1, y2));
 
   const w = nx2 - nx1, h = ny2 - ny1;
-  if (w <= 0.01 || h <= 0.01) return null;
-  // Return [x, y, width, height] format expected by SmartCropImg
+  if (w <= 0.01 || h <= 0.01) return null; // ignore micro boxes
   return [nx1, ny1, w, h];
 }
 
+// Pick primary garment from YOLOS predictions
 function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
   const garmentPreds = preds.filter(p => p && p.score >= minScore && isBox(p.box) && mapLabelToCategory(p.label) !== null);
   if (!garmentPreds.length) return null;
@@ -108,121 +120,83 @@ function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
   garmentPreds.sort((a, b) => {
     const scoreDiff = b.score - a.score;
     if (scoreDiff !== 0) return scoreDiff;
-
     const areaA = (a.box.xmax - a.box.xmin) * (a.box.ymax - a.box.ymin);
-    const areaB = (b.box.xmax - b.box.xmin) * (b.box.ymax - b.box.ymin);
+    const areaB = (b.box.xmax - b.box.xmin) * (b.box.ymax - b.ymin);
     return areaB - areaA;
   });
 
   return garmentPreds[0];
 }
 
-async function callCLIP(dataUrl: string, retryCount = 0): Promise<string> {
-  const labels = ["Tops","Bottoms","Outerwear","Dress","Bags","Shoes","Accessories"];
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
-    
-    const response = await fetch(`https://api-inference.huggingface.co/models/${HF_CLIP_MODEL}`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${HF_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: dataUrl,
-        parameters: {
-          candidate_labels: labels,
-          multi_label: false
-        }
-      }),
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "<no body>");
-      
-      // Retry on temporary failures
-      if ((response.status === 503 || response.status === 502 || response.status === 504) && retryCount < 2) {
-        console.log(`[CLIP] Retrying after ${response.status} error (attempt ${retryCount + 1}/3)`);
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
-        return callCLIP(dataUrl, retryCount + 1);
-      }
-      
-      throw new Error(`CLIP error ${response.status}: ${errorText}`);
-    }
-
-    const result = await response.json();
-    if (result.labels && result.labels.length > 0) {
-      return result.labels[0];
-    }
-    return "Clothing";
-  } catch (err) {
-    if (retryCount < 2 && (err.name === 'AbortError' || err.message.includes('fetch failed'))) {
-      const reason = err.name === 'AbortError' ? 'timeout' : 'network error';
-      console.log(`[CLIP] ${reason}, retrying (attempt ${retryCount + 1}/3)`);
-      await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
-      return callCLIP(dataUrl, retryCount + 1);
-    }
-    throw err;
-  }
+// IoU + lightweight NMS for same-label overlaps
+function iou(a: HFBox, b: HFBox) {
+  const x1 = Math.max(a.xmin, b.xmin), y1 = Math.max(a.ymin, b.ymin);
+  const x2 = Math.min(a.xmax, b.xmax), y2 = Math.min(a.ymax, b.ymax);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const areaA = Math.max(0, a.xmax - a.xmin) * Math.max(0, a.ymax - a.ymin);
+  const areaB = Math.max(0, b.xmax - b.xmin) * Math.max(0, b.ymax - b.ymin);
+  const union = areaA + areaB - inter;
+  return union > 0 ? inter / union : 0;
 }
-
-async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
-  const prompts = {
-    "Bags": ["handbag","tote bag","shoulder bag","crossbody bag","bag","wallet"],
-    "Shoes": ["shoe","sneaker","boot","heel","flat","sandal"],
-    "Accessories": ["belt","sunglasses","glasses","hat","watch","tie","scarf"]
-  };
-
-  const labels = prompts[category as keyof typeof prompts];
-  if (!labels) return null;
-
-  const text = labels.join(" . ");
-  try {
-    const response = await fetch(`https://api-inference.huggingface.co/models/${HF_GDINO_MODEL}`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${HF_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        image: dataUrl,
-        text: text,
-        box_threshold: 0.25,
-        text_threshold: 0.25
-      }),
-    });
-
-    if (!response.ok) {
-      console.log(`[GDINO] Failed: ${response.status}`);
-      return null;
-    }
-
-    const result = await response.json();
-    if (result && Array.isArray(result) && result.length > 0) {
-      const boxes = result.filter(r => r.box && r.score);
-      if (boxes.length > 0) {
-        boxes.sort((a, b) => b.score - a.score);
-        const box = boxes[0].box;
-        return [box.xmin, box.ymin, box.xmax, box.ymax];
+function nmsSameLabel(preds: HFPred[], thr = 0.5): HFPred[] {
+  const sorted = [...preds].sort((a,b)=>b.score-a.score);
+  const out: HFPred[] = [];
+  while (sorted.length) {
+    const cur = sorted.shift()!;
+    out.push(cur);
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      if (cur.label === sorted[i].label && iou(cur.box, sorted[i].box) > thr) {
+        sorted.splice(i,1);
       }
     }
-  } catch (err) {
-    console.log(`[GDINO] Exception: ${err}`);
   }
-
-  return null;
+  return out;
 }
 
+// Label matching to pick a YOLOS box for a chosen family
+function labelLooksLike(predLabel: string, family: string) {
+  const L = predLabel.toLowerCase();
+  if (family === "Bags") return L.includes("bag") || L.includes("wallet");
+  if (family === "Shoes") return L.includes("shoe") || L.includes("sneaker") || L.includes("boot") || L.includes("heel");
+  if (family === "Accessories") return (
+    L.includes("belt") || L.includes("glasses") || L.includes("sunglasses") || L.includes("hat") || L.includes("watch") || L.includes("tie")
+  );
+  if (family === "Tops") return L.includes("top") || L.includes("shirt") || L.includes("blouse") || L.includes("sweater") || L.includes("cardigan");
+  if (family === "Bottoms") return L.includes("skirt") || L.includes("pants") || L.includes("shorts") || L.includes("jeans");
+  if (family === "Dress") return L.includes("dress") || L.includes("jumpsuit") || L.includes("romper");
+  if (family === "Outerwear") return L.includes("jacket") || L.includes("coat") || L.includes("trench") || L.includes("blazer") || L.includes("puffer");
+  return false;
+}
+function pickBoxForFamily(preds: HFPred[], family: string): HFBox | null {
+  const matches = preds.filter(p => p.box && labelLooksLike(p.label, family)).sort((a,b)=>b.score-a.score);
+  return matches.length ? matches[0].box : null;
+}
+
+// Weighted category vote with small-item boost
+function voteCategory(preds: HFPred[], minScore = VOTE_MIN_SCORE): string {
+  const weights: Record<string, number> = {};
+  for (const p of preds) {
+    if (!isBox(p.box) || p.score < minScore) continue;
+    const fam = mapLabelToCategory(p.label);
+    if (!fam) continue;
+    weights[fam] = (weights[fam] ?? 0) + p.score;
+  }
+  const SMALL = new Set(["Bags","Shoes","Accessories"]);
+  for (const fam of Object.keys(weights)) {
+    if (SMALL.has(fam)) weights[fam] *= SMALL_FAMILY_BOOST;
+  }
+  const top = Object.entries(weights).sort((a,b)=>b[1]-a[1])[0];
+  return top ? top[0] : "Clothing";
+}
+
+// --- Image helpers (for data URLs to CLIP/GDINO) ---
 function getImageDims(buf: Uint8Array): { width: number; height: number } | null {
+  // PNG
   if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     return { width: dv.getUint32(16), height: dv.getUint32(20) };
   }
+  // JPEG
   if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8) {
     let offset = 2;
     while (offset + 9 < buf.length) {
@@ -239,14 +213,12 @@ function getImageDims(buf: Uint8Array): { width: number; height: number } | null
   }
   return null;
 }
-
 function dataUrlInfo(dataUrl: string): { dataUrl: string; width: number; height: number } {
   const [, b64] = dataUrl.split(",", 2);
   const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   const dims = getImageDims(buf) ?? { width: 1, height: 1 };
   return { dataUrl, width: dims.width, height: dims.height };
 }
-
 async function urlToDataUrl(url: string): Promise<{ dataUrl: string; width: number; height: number }> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`fetch image failed: ${r.status} ${r.statusText}`);
@@ -258,60 +230,101 @@ async function urlToDataUrl(url: string): Promise<{ dataUrl: string; width: numb
   return { dataUrl: `data:${mime};base64,${btoa(binary)}`, width: dims.width, height: dims.height };
 }
 
-async function callHF(dataUrl: string, threshold: number, retryCount = 0): Promise<HFPred[]> {
+// --- HF calls (JSON dataURL for YOLOS, JSON for CLIP/GDINO) ---
+async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
   const body: HFPayload = { inputs: dataUrl, parameters: { threshold } };
-  
+  const hfRes = await fetch(HF_ENDPOINT_URL, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!hfRes.ok) {
+    throw new Error(`HF error ${hfRes.status}: ${await hfRes.text().catch(() => "<no body>")}`);
+  }
+  return await hfRes.json();
+}
+
+// CLIP as coarse-family helper
+async function callCLIP(dataUrl: string): Promise<string> {
+  const labels = ["Tops","Bottoms","Outerwear","Dress","Bags","Shoes","Accessories"];
+  const response = await fetch(`https://api-inference.huggingface.co/models/${HF_CLIP_MODEL}`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      inputs: dataUrl,
+      parameters: { candidate_labels: labels, multi_label: false }
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`CLIP error ${response.status}: ${await response.text().catch(() => "<no body>")}`);
+  }
+  const result = await response.json();
+  if (result.labels && result.labels.length > 0) return result.labels[0];
+  return "Clothing";
+}
+
+async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
+  const prompts = {
+    "Bags": ["handbag","tote bag","shoulder bag","crossbody bag","bag","wallet"],
+    "Shoes": ["shoe","sneaker","boot","heel","flat","sandal"],
+    "Accessories": ["belt","sunglasses","glasses","hat","watch","tie","scarf"]
+  } as const;
+  // @ts-ignore
+  const labels = prompts[category as keyof typeof prompts];
+  if (!labels) return null;
+
+  const text = labels.join(" . ");
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout for YOLOS
-    
-    const hfRes = await fetch(HF_ENDPOINT_URL, {
+    const response = await fetch(`https://api-inference.huggingface.co/models/${HF_GDINO_MODEL}`, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${HF_TOKEN}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
-      signal: controller.signal
+      body: JSON.stringify({
+        image: dataUrl,
+        text,
+        box_threshold: 0.25,
+        text_threshold: 0.25
+      }),
     });
 
-    clearTimeout(timeoutId);
+    if (!response.ok) {
+      console.log(`[GDINO] Failed: ${response.status}`);
+      return null;
+    }
 
-    if (!hfRes.ok) {
-      const errorText = await hfRes.text().catch(() => "<no body>");
-      
-      // Retry on temporary failures (503, 502, 504) up to 2 times
-      if ((hfRes.status === 503 || hfRes.status === 502 || hfRes.status === 504) && retryCount < 2) {
-        console.log(`[HF] Retrying after ${hfRes.status} error (attempt ${retryCount + 1}/3)`);
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000)); // 1s, 2s backoff
-        return callHF(dataUrl, threshold, retryCount + 1);
+    const result = await response.json();
+    if (Array.isArray(result) && result.length > 0) {
+      const boxes = result.filter((r: any) => r.box && r.score);
+      if (boxes.length > 0) {
+        boxes.sort((a: any, b: any) => b.score - a.score);
+        const box = boxes[0].box;
+        return [box.xmin, box.ymin, box.xmax, box.ymax];
       }
-      
-      throw new Error(`HF error ${hfRes.status}: ${errorText}`);
     }
-    
-    return await hfRes.json();
   } catch (err) {
-    if (retryCount < 2 && (err.name === 'AbortError' || err.message.includes('fetch failed'))) {
-      const reason = err.name === 'AbortError' ? 'timeout' : 'network error';
-      console.log(`[HF] ${reason}, retrying (attempt ${retryCount + 1}/3)`);
-      await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
-      return callHF(dataUrl, threshold, retryCount + 1);
-    }
-    throw err;
+    console.log(`[GDINO] Exception: ${err}`);
   }
+  return null;
 }
 
+// --- Serve ---
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return json({ status: "ok" });
 
   const t0 = performance.now();
   try {
-    if (req.method !== "POST") {
-      return json({ status: "fail", error: "Method not allowed", build: BUILD }, 405);
-    }
+    if (req.method !== "POST") return json({ status: "fail", error: "Method not allowed", build: BUILD }, 405);
 
     const body = (await req.json()) as ReqBody;
+
     let img: { dataUrl: string; width: number; height: number };
     if (body.imageUrl) {
       img = await urlToDataUrl(body.imageUrl);
@@ -322,52 +335,77 @@ Deno.serve(async (req) => {
     }
     const { dataUrl, width: imgW, height: imgH } = img;
 
-    const t = typeof body.threshold === "number" ? body.threshold : 0.12;
+    const baseT = typeof body.threshold === "number" ? body.threshold : 0.12;
 
-    // Run YOLOS and CLIP in parallel since they're independent
-    const [predsResult, categoryResult] = await Promise.allSettled([
-      callHF(dataUrl, t),
-      callCLIP(dataUrl)
+    // --- YOLOS pass (with small-item second pass) ---
+    let preds = await callHF(dataUrl, baseT);
+
+    const SMALL_LABELS = new Set([
+      "shoe","bag, wallet","belt","glasses","sunglasses","hat","watch","tie","sock","tights, stockings","leg warmer"
     ]);
 
-    // Handle YOLOS results
-    let preds: HFPred[] = [];
-    if (predsResult.status === "fulfilled") {
-      preds = predsResult.value;
-    } else {
-      console.log(`[YOLOS] Failed: ${predsResult.reason}`);
-      throw new Error(`YOLOS detection failed: ${predsResult.reason}`);
-    }
-
-    // Check for small items and retry with lower threshold if needed
-    const smallItemLabels = new Set(["shoe","bag, wallet","belt","glasses","hat"]);
-    const hasSmallItems = preds.some(p => smallItemLabels.has(p.label));
-    let primary = pickPrimaryGarment(preds, t);
+    const hasSmallItems = preds.some(p => SMALL_LABELS.has(p.label.toLowerCase()));
+    let primary = pickPrimaryGarment(preds, baseT);
 
     if (!primary && hasSmallItems) {
-      console.log(`[YOLOS] Retrying with lower threshold for small items`);
-      const t2 = Math.max(0.06, t * 0.5);
+      const t2 = Math.max(0.06, baseT * 0.5);
       const preds2 = await callHF(dataUrl, t2);
       if (preds2?.length) preds = preds2;
       primary = pickPrimaryGarment(preds, t2);
     }
 
-    // Handle CLIP results
-    let category: string;
-    if (categoryResult.status === "fulfilled") {
-      category = categoryResult.value;
-    } else {
-      console.log(`[CLIP] Failed, using fallback: ${categoryResult.reason}`);
-      category = primary ? (mapLabelToCategory(primary.label) ?? "Clothing") : "Clothing";
+    // NMS per label for cleaner list
+    preds = nmsSameLabel(preds, 0.5);
+
+    // Weighted YOLO vote (with boost)
+    let yoloFamily = voteCategory(preds);
+
+    // Presence checks to make Bags/Shoes visible (CSV learning)
+    const bagish  = preds.some(p => /bag|wallet/i.test(p.label) && p.score >= BAG_FORCE_MIN);
+    const shoeish = preds.some(p => /shoe|sneaker|boot|heel/i.test(p.label) && p.score >= SHOE_FORCE_MIN);
+    const accish  = preds.some(p => /belt|glasses|sunglasses|hat|watch|tie/i.test(p.label));
+
+    // CLIP coarse-family hint
+    const FAMILIES_SMALL    = new Set(["Bags","Shoes","Accessories"]);
+    const FAMILIES_GARMENTS = new Set(["Tops","Bottoms","Dress","Outerwear"]);
+
+    let clipFamily = yoloFamily;
+    try { clipFamily = await callCLIP(dataUrl); } catch { /* keep yoloFamily */ }
+
+    // Final category decision (layered)
+    let category = yoloFamily;
+
+    // 1) Soft-force small items when present
+    if (bagish) category = "Bags";
+    else if (shoeish && category !== "Bags") category = "Shoes";
+
+    // 2) If YOLO says garment but CLIP says small item, let CLIP flip
+    const yoloIsGarment = FAMILIES_GARMENTS.has(yoloFamily);
+    const clipIsSmall   = FAMILIES_SMALL.has(clipFamily);
+    if (clipIsSmall && yoloIsGarment) category = clipFamily;
+
+    // 3) If YOLO had no usable primary, trust CLIP
+    if (!primary) category = clipFamily;
+
+    // --- Pick bbox consistent with the FINAL category ---
+    let bbox: [number,number,number,number] | null = null;
+
+    // Prefer a YOLOS box matching the chosen family
+    const famBox = pickBoxForFamily(preds, category);
+    if (famBox) bbox = toNormBox(famBox, imgW, imgH);
+
+    // If none and small item, use GDINO fallback
+    if (!bbox && FAMILIES_SMALL.has(category)) {
+      const fb = await callGroundingDINO(dataUrl, category);
+      if (fb) bbox = toNormBox(fb, imgW, imgH);
     }
 
-    let bbox = primary && isBox(primary.box) ? toNormBox(primary.box, imgW, imgH) : null;
-
-    if (!bbox && ["Bags", "Shoes", "Accessories"].includes(category)) {
-      const fallbackBox = await callGroundingDINO(dataUrl, category);
-      if (fallbackBox) bbox = toNormBox(fallbackBox, imgW, imgH);
+    // As last resort: primary box only if it matches family
+    if (!bbox && primary && mapLabelToCategory(primary.label) === category) {
+      bbox = toNormBox(primary.box, imgW, imgH);
     }
 
+    // --- Sanitize result list (normalized boxes; drop nulls) ---
     const sanitized = [...preds]
       .sort((a,b) => b.score - a.score)
       .slice(0, 8)
@@ -383,51 +421,24 @@ Deno.serve(async (req) => {
     return json({
       status: "success",
       build: BUILD,
-      category,
-      bbox,
+      category,                     // final coarse family
+      bbox,                         // normalized [x,y,w,h] or null
       proposedTitle: category,
-      colorName: null,
+      colorName: null,              // Phase 1 can re-enable color extraction
       colorHex: null,
       yolosTopLabels: sanitized.slice(0,3).map(d => d.label),
-      result: trimmed,
+      result: trimmed,              // [{score,label,box:[x,y,w,h]}...]
       latencyMs,
-      model: "valentinafeve/yolos-fashionpedia"
+      model: "valentinafeve/yolos-fashionpedia",
+      debug: {
+        yoloFamily, clipFamily, bagish, shoeish, accish,
+        VOTE_MIN_SCORE, SMALL_FAMILY_BOOST, BAG_FORCE_MIN, SHOE_FORCE_MIN,
+        topYoloLabels: sanitized.slice(0,5).map(d => ({label:d.label, score:d.score}))
+      }
     });
 
   } catch (err) {
     const latencyMs = Math.round(performance.now() - t0);
-    const errorMessage = String(err);
-    
-    // Provide user-friendly error messages for common issues
-    if (errorMessage.includes('503 Service Unavailable')) {
-      return json({ 
-        status: "fail", 
-        stop: "service_unavailable", 
-        latencyMs, 
-        error: "AI service is temporarily unavailable. Please try again in a moment.",
-        technicalError: errorMessage,
-        build: BUILD 
-      }, 503);
-    }
-    
-    if (errorMessage.includes('HF error 50')) {
-      return json({ 
-        status: "fail", 
-        stop: "service_error", 
-        latencyMs, 
-        error: "AI service is experiencing issues. Please try again later.",
-        technicalError: errorMessage,
-        build: BUILD 
-      }, 503);
-    }
-    
-    return json({ 
-      status: "fail", 
-      stop: "exception", 
-      latencyMs, 
-      error: "An unexpected error occurred while processing your image. Please try again.",
-      technicalError: errorMessage,
-      build: BUILD 
-    }, 500);
+    return json({ status: "fail", stop: "exception", latencyMs, error: String(err), build: BUILD }, 500);
   }
 });
