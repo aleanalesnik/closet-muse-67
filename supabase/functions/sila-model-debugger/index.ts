@@ -117,33 +117,51 @@ function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
   return garmentPreds[0];
 }
 
-async function callCLIP(dataUrl: string): Promise<string> {
+async function callCLIP(dataUrl: string, retryCount = 0): Promise<string> {
   const labels = ["Tops","Bottoms","Outerwear","Dress","Bags","Shoes","Accessories"];
 
-  const response = await fetch(`https://api-inference.huggingface.co/models/${HF_CLIP_MODEL}`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${HF_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      inputs: dataUrl,
-      parameters: {
-        candidate_labels: labels,
-        multi_label: false
+  try {
+    const response = await fetch(`https://api-inference.huggingface.co/models/${HF_CLIP_MODEL}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputs: dataUrl,
+        parameters: {
+          candidate_labels: labels,
+          multi_label: false
+        }
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "<no body>");
+      
+      // Retry on temporary failures
+      if ((response.status === 503 || response.status === 502 || response.status === 504) && retryCount < 2) {
+        console.log(`[CLIP] Retrying after ${response.status} error (attempt ${retryCount + 1}/3)`);
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+        return callCLIP(dataUrl, retryCount + 1);
       }
-    }),
-  });
+      
+      throw new Error(`CLIP error ${response.status}: ${errorText}`);
+    }
 
-  if (!response.ok) {
-    throw new Error(`CLIP error ${response.status}: ${await response.text().catch(() => "<no body>")}`);
+    const result = await response.json();
+    if (result.labels && result.labels.length > 0) {
+      return result.labels[0];
+    }
+    return "Clothing";
+  } catch (err) {
+    if (retryCount < 2 && err.message.includes('fetch failed')) {
+      console.log(`[CLIP] Network error, retrying (attempt ${retryCount + 1}/3)`);
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+      return callCLIP(dataUrl, retryCount + 1);
+    }
+    throw err;
   }
-
-  const result = await response.json();
-  if (result.labels && result.labels.length > 0) {
-    return result.labels[0];
-  }
-  return "Clothing";
 }
 
 async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
@@ -233,21 +251,41 @@ async function urlToDataUrl(url: string): Promise<{ dataUrl: string; width: numb
   return { dataUrl: `data:${mime};base64,${btoa(binary)}`, width: dims.width, height: dims.height };
 }
 
-async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
+async function callHF(dataUrl: string, threshold: number, retryCount = 0): Promise<HFPred[]> {
   const body: HFPayload = { inputs: dataUrl, parameters: { threshold } };
-  const hfRes = await fetch(HF_ENDPOINT_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${HF_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  
+  try {
+    const hfRes = await fetch(HF_ENDPOINT_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
 
-  if (!hfRes.ok) {
-    throw new Error(`HF error ${hfRes.status}: ${await hfRes.text().catch(() => "<no body>")}`);
+    if (!hfRes.ok) {
+      const errorText = await hfRes.text().catch(() => "<no body>");
+      
+      // Retry on temporary failures (503, 502, 504) up to 2 times
+      if ((hfRes.status === 503 || hfRes.status === 502 || hfRes.status === 504) && retryCount < 2) {
+        console.log(`[HF] Retrying after ${hfRes.status} error (attempt ${retryCount + 1}/3)`);
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000)); // 1s, 2s backoff
+        return callHF(dataUrl, threshold, retryCount + 1);
+      }
+      
+      throw new Error(`HF error ${hfRes.status}: ${errorText}`);
+    }
+    
+    return await hfRes.json();
+  } catch (err) {
+    if (retryCount < 2 && err.message.includes('fetch failed')) {
+      console.log(`[HF] Network error, retrying (attempt ${retryCount + 1}/3)`);
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+      return callHF(dataUrl, threshold, retryCount + 1);
+    }
+    throw err;
   }
-  return await hfRes.json();
 }
 
 Deno.serve(async (req) => {
@@ -327,6 +365,38 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     const latencyMs = Math.round(performance.now() - t0);
-    return json({ status: "fail", stop: "exception", latencyMs, error: String(err), build: BUILD }, 500);
+    const errorMessage = String(err);
+    
+    // Provide user-friendly error messages for common issues
+    if (errorMessage.includes('503 Service Unavailable')) {
+      return json({ 
+        status: "fail", 
+        stop: "service_unavailable", 
+        latencyMs, 
+        error: "AI service is temporarily unavailable. Please try again in a moment.",
+        technicalError: errorMessage,
+        build: BUILD 
+      }, 503);
+    }
+    
+    if (errorMessage.includes('HF error 50')) {
+      return json({ 
+        status: "fail", 
+        stop: "service_error", 
+        latencyMs, 
+        error: "AI service is experiencing issues. Please try again later.",
+        technicalError: errorMessage,
+        build: BUILD 
+      }, 503);
+    }
+    
+    return json({ 
+      status: "fail", 
+      stop: "exception", 
+      latencyMs, 
+      error: "An unexpected error occurred while processing your image. Please try again.",
+      technicalError: errorMessage,
+      build: BUILD 
+    }, 500);
   }
 });

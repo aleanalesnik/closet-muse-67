@@ -254,9 +254,33 @@ export default function Closet({ user }: ClosetProps) {
     } catch (error: any) {
       console.error('[YOLOS] Upload failed:', error);
       setUploadingItems(prev => prev.filter(item => item.id !== uploadingId));
+      
+      // Provide user-friendly error messages based on error type
+      let title = 'Upload failed';
+      let description = 'Please try again.';
+      
+      const errorMessage = error.message || '';
+      
+      if (errorMessage.includes('503 Service Unavailable') || errorMessage.includes('service_unavailable')) {
+        title = 'Service temporarily unavailable';
+        description = 'The AI analysis service is temporarily down. Please try uploading your item again in a few minutes.';
+      } else if (errorMessage.includes('service_error') || errorMessage.includes('HF error 50')) {
+        title = 'Analysis service issues';
+        description = 'The image analysis service is experiencing issues. Please try again later.';
+      } else if (errorMessage.includes('Edge error 500')) {
+        title = 'Processing error';
+        description = 'There was an issue processing your image. Please try uploading it again.';
+      } else if (errorMessage.includes('Not authenticated')) {
+        title = 'Authentication required';
+        description = 'Please sign in to upload items.';
+      } else if (errorMessage.includes('Public URL never became readable')) {
+        title = 'Upload incomplete';
+        description = 'Your image is still being processed. Please wait a moment and try again.';
+      }
+      
       toast({
-        title: 'Upload failed',
-        description: error.message,
+        title,
+        description,
         variant: 'destructive'
       });
     }
