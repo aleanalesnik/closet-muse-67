@@ -337,8 +337,34 @@ Deno.serve(async (req) => {
 
     const baseT = typeof body.threshold === "number" ? body.threshold : 0.12;
 
-    // --- YOLOS pass (with small-item second pass) ---
-    let preds = await callHF(dataUrl, baseT);
+    // --- Parallel API calls to reduce latency ---
+    console.log(`[PERF] Starting parallel API calls at ${performance.now() - t0}ms`);
+    
+    // Start YOLOS and CLIP in parallel
+    const [yolosResult, clipResult] = await Promise.allSettled([
+      callHF(dataUrl, baseT),
+      callCLIP(dataUrl)
+    ]);
+
+    let preds: HFPred[] = [];
+    let clipFamily = "Clothing";
+
+    // Handle YOLOS result
+    if (yolosResult.status === 'fulfilled') {
+      preds = yolosResult.value;
+      console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
+    } else {
+      console.log(`[ERROR] YOLOS failed: ${yolosResult.reason}`);
+      throw new Error(`YOLOS failed: ${yolosResult.reason}`);
+    }
+
+    // Handle CLIP result 
+    if (clipResult.status === 'fulfilled') {
+      clipFamily = clipResult.value;
+      console.log(`[PERF] CLIP completed at ${performance.now() - t0}ms`);
+    } else {
+      console.log(`[WARN] CLIP failed, using YOLO vote: ${clipResult.reason}`);
+    }
 
     const SMALL_LABELS = new Set([
       "shoe","bag, wallet","belt","glasses","sunglasses","hat","watch","tie","sock","tights, stockings","leg warmer"
@@ -347,11 +373,14 @@ Deno.serve(async (req) => {
     const hasSmallItems = preds.some(p => SMALL_LABELS.has(p.label.toLowerCase()));
     let primary = pickPrimaryGarment(preds, baseT);
 
+    // Only do second YOLOS pass if really needed
     if (!primary && hasSmallItems) {
+      console.log(`[PERF] Second YOLOS pass needed at ${performance.now() - t0}ms`);
       const t2 = Math.max(0.06, baseT * 0.5);
       const preds2 = await callHF(dataUrl, t2);
       if (preds2?.length) preds = preds2;
       primary = pickPrimaryGarment(preds, t2);
+      console.log(`[PERF] Second YOLOS completed at ${performance.now() - t0}ms`);
     }
 
     // NMS per label for cleaner list
@@ -365,14 +394,10 @@ Deno.serve(async (req) => {
     const shoeish = preds.some(p => /shoe|sneaker|boot|heel/i.test(p.label) && p.score >= SHOE_FORCE_MIN);
     const accish  = preds.some(p => /belt|glasses|sunglasses|hat|watch|tie/i.test(p.label));
 
-    // CLIP coarse-family hint
+    // Final category decision (layered)
     const FAMILIES_SMALL    = new Set(["Bags","Shoes","Accessories"]);
     const FAMILIES_GARMENTS = new Set(["Tops","Bottoms","Dress","Outerwear"]);
 
-    let clipFamily = yoloFamily;
-    try { clipFamily = await callCLIP(dataUrl); } catch { /* keep yoloFamily */ }
-
-    // Final category decision (layered)
     let category = yoloFamily;
 
     // 1) Soft-force small items when present
@@ -387,22 +412,36 @@ Deno.serve(async (req) => {
     // 3) If YOLO had no usable primary, trust CLIP
     if (!primary) category = clipFamily;
 
+    console.log(`[PERF] Category decision completed at ${performance.now() - t0}ms`);
+
     // --- Pick bbox consistent with the FINAL category ---
     let bbox: [number,number,number,number] | null = null;
 
     // Prefer a YOLOS box matching the chosen family
     const famBox = pickBoxForFamily(preds, category);
-    if (famBox) bbox = toNormBox(famBox, imgW, imgH);
+    if (famBox) {
+      bbox = toNormBox(famBox, imgW, imgH);
+      console.log(`[PERF] Found YOLOS box for ${category} at ${performance.now() - t0}ms`);
+    }
 
-    // If none and small item, use GDINO fallback
-    if (!bbox && FAMILIES_SMALL.has(category)) {
-      const fb = await callGroundingDINO(dataUrl, category);
-      if (fb) bbox = toNormBox(fb, imgW, imgH);
+    // If none and small item, use GDINO fallback (but only if really necessary)
+    if (!bbox && FAMILIES_SMALL.has(category) && !primary) {
+      console.log(`[PERF] Using GDINO fallback for ${category} at ${performance.now() - t0}ms`);
+      try {
+        const fb = await callGroundingDINO(dataUrl, category);
+        if (fb) {
+          bbox = toNormBox(fb, imgW, imgH);
+          console.log(`[PERF] GDINO completed at ${performance.now() - t0}ms`);
+        }
+      } catch (err) {
+        console.log(`[WARN] GDINO failed: ${err}`);
+      }
     }
 
     // As last resort: primary box only if it matches family
     if (!bbox && primary && mapLabelToCategory(primary.label) === category) {
       bbox = toNormBox(primary.box, imgW, imgH);
+      console.log(`[PERF] Using primary box fallback at ${performance.now() - t0}ms`);
     }
 
     // --- Sanitize result list (normalized boxes; drop nulls) ---
