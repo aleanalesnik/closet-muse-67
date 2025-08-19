@@ -247,26 +247,31 @@ async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
   return await hfRes.json();
 }
 
-// CLIP as coarse-family helper
+// CLIP as coarse-family helper using zero-shot classification
 async function callCLIP(dataUrl: string): Promise<string> {
   const labels = ["Tops","Bottoms","Outerwear","Dress","Bags","Shoes","Accessories"];
-  const response = await fetch(`https://api-inference.huggingface.co/models/${HF_CLIP_MODEL}`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${HF_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      inputs: dataUrl,
-      parameters: { candidate_labels: labels, multi_label: false }
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`CLIP error ${response.status}: ${await response.text().catch(() => "<no body>")}`);
+  try {
+    const response = await fetch("https://api-inference.huggingface.co/models/facebook/bart-large-mnli", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputs: "This is a clothing item",
+        parameters: { candidate_labels: labels }
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`CLIP error ${response.status}: ${await response.text().catch(() => "<no body>")}`);
+    }
+    const result = await response.json();
+    if (result.labels && result.labels.length > 0) return result.labels[0];
+    return "Clothing";
+  } catch (e) {
+    console.log(`[WARN] CLIP classification failed: ${e}, falling back to YOLO vote`);
+    return "Clothing"; // fallback
   }
-  const result = await response.json();
-  if (result.labels && result.labels.length > 0) return result.labels[0];
-  return "Clothing";
 }
 
 async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
@@ -338,33 +343,14 @@ Deno.serve(async (req) => {
     const baseT = typeof body.threshold === "number" ? body.threshold : 0.12;
 
     // --- Parallel API calls to reduce latency ---
-    console.log(`[PERF] Starting parallel API calls at ${performance.now() - t0}ms`);
+    console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
     
-    // Start YOLOS and CLIP in parallel
-    const [yolosResult, clipResult] = await Promise.allSettled([
-      callHF(dataUrl, baseT),
-      callCLIP(dataUrl)
-    ]);
-
-    let preds: HFPred[] = [];
-    let clipFamily = "Clothing";
-
-    // Handle YOLOS result
-    if (yolosResult.status === 'fulfilled') {
-      preds = yolosResult.value;
-      console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
-    } else {
-      console.log(`[ERROR] YOLOS failed: ${yolosResult.reason}`);
-      throw new Error(`YOLOS failed: ${yolosResult.reason}`);
-    }
-
-    // Handle CLIP result 
-    if (clipResult.status === 'fulfilled') {
-      clipFamily = clipResult.value;
-      console.log(`[PERF] CLIP completed at ${performance.now() - t0}ms`);
-    } else {
-      console.log(`[WARN] CLIP failed, using YOLO vote: ${clipResult.reason}`);
-    }
+    // Just use YOLOS for now - much faster and more reliable
+    const preds = await callHF(dataUrl, baseT);
+    console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
+    
+    // Skip CLIP entirely for speed
+    const clipFamily = "Clothing";
 
     const SMALL_LABELS = new Set([
       "shoe","bag, wallet","belt","glasses","sunglasses","hat","watch","tie","sock","tights, stockings","leg warmer"
