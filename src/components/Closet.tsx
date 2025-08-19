@@ -214,7 +214,6 @@ export default function Closet({ user }: ClosetProps) {
         category: analysis.category,          // <-- use edge category
         color_hex: analysis.colorHex ?? detectedColorHex,
         color_name: analysis.colorName ?? detectedColorName,
-        color_name: analysis.colorName ?? null,
         bbox: analysis.bbox,                  // <-- save [x,y,w,h]
         yolos_top_labels: analysis.yolosTopLabels ?? null,
       };
