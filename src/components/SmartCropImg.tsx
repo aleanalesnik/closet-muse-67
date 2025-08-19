@@ -59,7 +59,9 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
 }, ref) => {
   // Create a local ref for internal use
   const localImgRef = React.useRef<HTMLImageElement>(null);
+  const [isReady, setIsReady] = React.useState(false);
   const [style, setStyle] = React.useState<React.CSSProperties>({ 
+    opacity: 0,
     width: "100%", 
     height: "100%", 
     objectFit: "contain", 
@@ -70,16 +72,20 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     const img = localImgRef.current;
     if (!img) return;
 
+    let debounceTimer: NodeJS.Timeout;
+
     function apply() {
       const container = img.parentElement!;
+      if (!container) return;
+
       const cw = container.clientWidth;
       const ch = container.clientHeight;
 
       const iw = img.naturalWidth || 0;
       const ih = img.naturalHeight || 0;
 
-      // Don't process if image dimensions aren't ready yet
-      if (iw === 0 || ih === 0) {
+      // Don't process if image or container dimensions aren't ready yet
+      if (iw === 0 || ih === 0 || cw === 0 || ch === 0) {
         return;
       }
 
@@ -92,7 +98,9 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
           objectFit: "contain",
           objectPosition: "center",
           display: "block",
+          opacity: 1
         });
+        setIsReady(true);
         return;
       }
 
@@ -128,17 +136,26 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         left: offsetX,
         objectFit: "fill",
         transformOrigin: "0 0",
-        display: "block"
+        display: "block",
+        opacity: 1
       });
+      setIsReady(true);
     }
+
+    const debouncedApply = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(apply, 5);
+    };
 
     // Set up both load and error handlers
     const handleLoad = () => {
-      setTimeout(apply, 10); // Small delay to ensure layout is complete
+      apply(); // No timeout needed
     };
 
     const handleError = () => {
-      // Image error occurred
+      // Image error occurred, show fallback
+      setStyle(prev => ({ ...prev, opacity: 1 }));
+      setIsReady(true);
     };
 
     img.addEventListener('load', handleLoad);
@@ -151,12 +168,13 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
 
     const resizeObserver = new ResizeObserver(() => {
       if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-        apply();
+        debouncedApply();
       }
     });
     resizeObserver.observe(img.parentElement!);
     
     return () => {
+      clearTimeout(debounceTimer);
       resizeObserver.disconnect();
       img.removeEventListener('load', handleLoad);
       img.removeEventListener('error', handleError);
