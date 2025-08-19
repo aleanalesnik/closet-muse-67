@@ -211,11 +211,11 @@ export default function Closet({ user }: ClosetProps) {
       // Build payload using edge response directly 
       const payload = {
         title: analysis.proposedTitle ?? "Item",
-        category: analysis.category,          // <-- use edge category
+        category: analysis.category,
         color_hex: analysis.colorHex ?? detectedColorHex,
         color_name: analysis.colorName ?? detectedColorName,
-        bbox: analysis.bbox,                  // <-- save [x,y,w,h]
-        yolos_top_labels: analysis.yolosTopLabels ?? null,
+        bbox: analysis.bbox,
+        yolos_top_labels: analysis.yolosTopLabels ?? null
       };
       console.info('[YOLOS] persist', payload);
 
