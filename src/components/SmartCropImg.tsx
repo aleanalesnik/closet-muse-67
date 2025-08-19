@@ -17,37 +17,28 @@ function toXYWH(b?: number[] | null, iw?: number, ih?: number): number[] | null 
   const arr = b.map(Number);
   if (!arr.every(Number.isFinite)) return null;
 
-  let [x1, y1, x2, y2] = arr;
-  const max = Math.max(...arr);
-
-  if (max > 1) {
-    // Handle either percentage 0-100 or pixel space
-    if (max <= 100) {
-      // percentages
-      x1 /= 100; y1 /= 100; x2 /= 100; y2 /= 100;
-    } else {
-      if (!iw || !ih) return null;
-      x1 /= iw; y1 /= ih; x2 /= iw; y2 /= ih;
-    }
+  // The AI model returns normalized [x, y, w, h] coordinates (0-1)
+  let [x, y, w, h] = arr;
+  
+  // Handle pixel coordinates if needed
+  if (Math.max(...arr) > 1) {
+    if (!iw || !ih) return null;
+    x /= iw; y /= ih; w /= iw; h /= ih;
   }
 
-  // At this point values are normalized 0-1
-  const in01 = [x1, y1, x2, y2].every(v => v >= 0 && v <= 1);
-  if (!in01) return null;
+  // Validate normalized coordinates
+  const validCoords = [x, y, w, h].every(v => v >= 0 && v <= 1) && w > 0 && h > 0;
+  if (!validCoords) return null;
 
-  // Prefer interpreting as [x1,y1,x2,y2]
-  if (x2 > x1 && y2 > y1) {
-    const w = clamp01(x2 - x1);
-    const h = clamp01(y2 - y1);
-    if (w > 0 && h > 0) return [clamp01(x1), clamp01(y1), w, h];
-  }
-
-  // Fallback: treat as [x,y,w,h]
-  const w = clamp01(Math.min(x2, 1 - x1));
-  const h = clamp01(Math.min(y2, 1 - y1));
-  if (w > 0 && h > 0) return [clamp01(x1), clamp01(y1), w, h];
-
-  return null;
+  // Ensure bbox doesn't exceed image boundaries
+  const clampedX = clamp01(x);
+  const clampedY = clamp01(y);
+  const clampedW = clamp01(Math.min(w, 1 - clampedX));
+  const clampedH = clamp01(Math.min(h, 1 - clampedY));
+  
+  if (clampedW <= 0.01 || clampedH <= 0.01) return null; // ignore tiny boxes
+  
+  return [clampedX, clampedY, clampedW, clampedH];
 }
 
 const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({ 
@@ -57,7 +48,44 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
   className = "", 
   alt = "" 
 }, ref) => {
-  // For now, just show regular image - much faster!
+  // Convert bbox to normalized [x,y,w,h] if available
+  const xywh = toXYWH(bbox);
+  
+  if (!xywh) {
+    // No valid bbox, show regular image
+    return (
+      <div className={`relative overflow-hidden ${className}`}>
+        <img
+          ref={ref}
+          src={src}
+          alt={alt}
+          draggable={false}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            objectPosition: "center"
+          }}
+        />
+      </div>
+    );
+  }
+
+  // Apply smart cropping using object-position for better performance
+  const [x, y, w, h] = xywh;
+  
+  // Calculate the center of the bounding box with padding
+  const centerX = x + (w / 2);
+  const centerY = y + (h / 2);
+  
+  // Calculate scale to fit the bbox area (with padding) to the container
+  const paddedW = Math.min(1, w + (w * paddingPct * 2));
+  const paddedH = Math.min(1, h + (h * paddingPct * 2));
+  
+  // Use object-position to center on the detected area
+  const objectPosX = clamp01(centerX) * 100;
+  const objectPosY = clamp01(centerY) * 100;
+  
   return (
     <div className={`relative overflow-hidden ${className}`}>
       <img
@@ -69,7 +97,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          objectPosition: "center"
+          objectPosition: `${objectPosX}% ${objectPosY}%`
         }}
       />
     </div>
