@@ -134,7 +134,7 @@ export default function ItemDetailPage() {
         nav("/");
         return;
       }
-      const normalized = { ...data, bbox: normalizeBbox(data.bbox) } as ItemRow;
+          const normalized = { ...data, bbox: normalizeBbox(data.bbox) } as ItemRow;
       setItem(normalized);
       setTitle(normalized.title ?? "");
       setBrand(normalized.brand ?? "");
