@@ -121,6 +121,9 @@ async function callCLIP(dataUrl: string, retryCount = 0): Promise<string> {
   const labels = ["Tops","Bottoms","Outerwear","Dress","Bags","Shoes","Accessories"];
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    
     const response = await fetch(`https://api-inference.huggingface.co/models/${HF_CLIP_MODEL}`, {
       method: "POST",
       headers: {
@@ -134,7 +137,10 @@ async function callCLIP(dataUrl: string, retryCount = 0): Promise<string> {
           multi_label: false
         }
       }),
+      signal: controller.signal
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "<no body>");
@@ -155,8 +161,9 @@ async function callCLIP(dataUrl: string, retryCount = 0): Promise<string> {
     }
     return "Clothing";
   } catch (err) {
-    if (retryCount < 2 && err.message.includes('fetch failed')) {
-      console.log(`[CLIP] Network error, retrying (attempt ${retryCount + 1}/3)`);
+    if (retryCount < 2 && (err.name === 'AbortError' || err.message.includes('fetch failed'))) {
+      const reason = err.name === 'AbortError' ? 'timeout' : 'network error';
+      console.log(`[CLIP] ${reason}, retrying (attempt ${retryCount + 1}/3)`);
       await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
       return callCLIP(dataUrl, retryCount + 1);
     }
@@ -255,6 +262,9 @@ async function callHF(dataUrl: string, threshold: number, retryCount = 0): Promi
   const body: HFPayload = { inputs: dataUrl, parameters: { threshold } };
   
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout for YOLOS
+    
     const hfRes = await fetch(HF_ENDPOINT_URL, {
       method: "POST",
       headers: {
@@ -262,7 +272,10 @@ async function callHF(dataUrl: string, threshold: number, retryCount = 0): Promi
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: controller.signal
     });
+
+    clearTimeout(timeoutId);
 
     if (!hfRes.ok) {
       const errorText = await hfRes.text().catch(() => "<no body>");
@@ -279,8 +292,9 @@ async function callHF(dataUrl: string, threshold: number, retryCount = 0): Promi
     
     return await hfRes.json();
   } catch (err) {
-    if (retryCount < 2 && err.message.includes('fetch failed')) {
-      console.log(`[HF] Network error, retrying (attempt ${retryCount + 1}/3)`);
+    if (retryCount < 2 && (err.name === 'AbortError' || err.message.includes('fetch failed'))) {
+      const reason = err.name === 'AbortError' ? 'timeout' : 'network error';
+      console.log(`[HF] ${reason}, retrying (attempt ${retryCount + 1}/3)`);
       await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
       return callHF(dataUrl, threshold, retryCount + 1);
     }
@@ -310,23 +324,40 @@ Deno.serve(async (req) => {
 
     const t = typeof body.threshold === "number" ? body.threshold : 0.12;
 
-    let preds = await callHF(dataUrl, t);
+    // Run YOLOS and CLIP in parallel since they're independent
+    const [predsResult, categoryResult] = await Promise.allSettled([
+      callHF(dataUrl, t),
+      callCLIP(dataUrl)
+    ]);
 
+    // Handle YOLOS results
+    let preds: HFPred[] = [];
+    if (predsResult.status === "fulfilled") {
+      preds = predsResult.value;
+    } else {
+      console.log(`[YOLOS] Failed: ${predsResult.reason}`);
+      throw new Error(`YOLOS detection failed: ${predsResult.reason}`);
+    }
+
+    // Check for small items and retry with lower threshold if needed
     const smallItemLabels = new Set(["shoe","bag, wallet","belt","glasses","hat"]);
     const hasSmallItems = preds.some(p => smallItemLabels.has(p.label));
     let primary = pickPrimaryGarment(preds, t);
 
     if (!primary && hasSmallItems) {
+      console.log(`[YOLOS] Retrying with lower threshold for small items`);
       const t2 = Math.max(0.06, t * 0.5);
       const preds2 = await callHF(dataUrl, t2);
       if (preds2?.length) preds = preds2;
       primary = pickPrimaryGarment(preds, t2);
     }
 
+    // Handle CLIP results
     let category: string;
-    try {
-      category = await callCLIP(dataUrl);
-    } catch {
+    if (categoryResult.status === "fulfilled") {
+      category = categoryResult.value;
+    } else {
+      console.log(`[CLIP] Failed, using fallback: ${categoryResult.reason}`);
       category = primary ? (mapLabelToCategory(primary.label) ?? "Clothing") : "Clothing";
     }
 
