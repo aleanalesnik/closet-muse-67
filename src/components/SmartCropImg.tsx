@@ -71,14 +71,11 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     );
   }
 
-  // Use bounding box to determine optimal object-position
+  // Smart cropping: center on the detected item
   const [x, y, w, h] = xywh;
-  
-  // Calculate the center of the detected item
   const centerX = x + w / 2;
   const centerY = y + h / 2;
   
-  // Convert to percentage for CSS object-position
   const objectPositionX = (centerX * 100).toFixed(1);
   const objectPositionY = (centerY * 100).toFixed(1);
   
