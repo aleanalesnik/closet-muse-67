@@ -4,7 +4,7 @@
 
 export type RGB = { r: number; g: number; b: number };
 
-const PALETTE: { name: string; hex: string }[] = [
+export const PALETTE: { name: string; hex: string }[] = [
   { name: "Black",   hex: "#000000" },
   { name: "Grey",    hex: "#D9D9D9" },
   { name: "White",   hex: "#FFFFFF" },
