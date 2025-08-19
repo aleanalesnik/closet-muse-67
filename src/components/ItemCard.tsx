@@ -48,12 +48,11 @@ export default function ItemCard({
         style={{ aspectRatio: "4 / 3" }}
       >
         <SmartCropImg
-  src={imageUrl}
-  bbox={item.bbox as any}
-  className="w-full h-full rounded-xl bg-white"
-  mode="fit"         // <= keep the whole bbox visible
-  paddingPct={0.08}  // <= ~8% margin around it (tweak 0.06–0.12 to taste)
-/>
+          src={imageUrl}
+          bbox={item.bbox as any}
+          className="w-full h-full rounded-xl bg-white"
+          paddingPct={0.08}
+        />
         
         {isSelectionMode && (
           <div className="absolute top-2 right-2 bg-background/80 rounded-full p-1">
