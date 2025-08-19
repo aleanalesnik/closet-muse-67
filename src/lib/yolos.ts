@@ -54,7 +54,7 @@ export async function analyzeImage(functionUrl: string, imageUrl: string, jwt: s
     },
     body: JSON.stringify({ imageUrl }),
   });
-  if (!r.ok) throw new Error(`Edge error ${r.status}: ${await r.text().catch(()=>"")}`);
+  if (!r.ok) throw new Error(`Edge error ${r.status}: ${await r.text().catch(()=>“”)}`);
   const raw = await r.json();
 
   // Normalize defensively (keeps old rows safe)
