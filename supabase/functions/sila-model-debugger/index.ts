@@ -346,7 +346,7 @@ Deno.serve(async (req) => {
     console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
     
     // Just use YOLOS for now - much faster and more reliable
-    const preds = await callHF(dataUrl, baseT);
+    let preds = await callHF(dataUrl, baseT);
     console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
     
     // Skip CLIP entirely for speed
