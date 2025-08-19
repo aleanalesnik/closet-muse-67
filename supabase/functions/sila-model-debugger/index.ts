@@ -1,8 +1,7 @@
 // supabase/functions/sila-model-debugger/index.ts
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
-
-const BUILD = "sila-debugger-2025-08-18f"; // update when redeploying
+const BUILD = "sila-debugger-2025-08-18e"; // update when redeploying
 
 // --- CORS ---
 const corsHeaders = {
@@ -245,8 +244,6 @@ async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
   }
   return await hfRes.json();
 }
-
-
 async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
   const prompts = {
     "Bags": ["handbag","tote bag","shoulder bag","crossbody bag","bag","wallet"],
@@ -314,14 +311,11 @@ Deno.serve(async (req) => {
     const { dataUrl, width: imgW, height: imgH } = img;
 
     const baseT = typeof body.threshold === "number" ? body.threshold : 0.12;
-
     // --- YOLOS processing only ---
     console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
-    
     // Just use YOLOS - much faster and more reliable
     let preds = await callHF(dataUrl, baseT);
     console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
-
     const SMALL_LABELS = new Set([
       "shoe","bag, wallet","belt","glasses","sunglasses","hat","watch","tie","sock","tights, stockings","leg warmer"
     ]);
@@ -356,7 +350,6 @@ Deno.serve(async (req) => {
     // 1) Soft-force small items when present
     if (bagish) category = "Bags";
     else if (shoeish && category !== "Bags") category = "Shoes";
-
     // 2) If YOLO had no usable primary, fall back to "Clothing"
     if (!primary && category === "Clothing") category = "Clothing";
 
