@@ -71,6 +71,7 @@ export default function Closet({ user }: ClosetProps) {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -362,7 +363,72 @@ export default function Closet({ user }: ClosetProps) {
     }
   };
 
-  const allItems = [...uploadingItems.map(u => ({ 
+  async function reanalyzeMissing(limit = 50) {
+    if (isBackfilling) return;
+    setIsBackfilling(true);
+    try {
+      // 1) Fetch a batch of items with null bbox
+      const { data: missing, error: qErr } = await supabase
+        .from('items')
+        .select('id,image_path')
+        .is('bbox', null)
+        .limit(limit);
+
+      if (qErr) throw qErr;
+      if (!missing || missing.length === 0) {
+        toast({ title: "Nothing to reanalyze", description: "All items already have bboxes." });
+        return;
+      }
+
+      // 2) Get auth + function URL
+      const { data: { session } } = await supabase.auth.getSession();
+      const jwt = session?.access_token;
+      if (!jwt) throw new Error("Not authenticated");
+      const functionUrl = `https://tqbjbugwwffdfhihpkcg.supabase.co/functions/v1/sila-model-debugger`;
+
+      let ok = 0, fail = 0;
+      for (let i = 0; i < missing.length; i++) {
+        const { id, image_path } = missing[i];
+        try {
+          // 3) Public URL and YOLOS analysis
+          const { data: pub } = supabase.storage.from('sila').getPublicUrl(image_path);
+          await waitUntilPublic(pub.publicUrl);
+          const analysis = await analyzeImage(functionUrl, pub.publicUrl, jwt);
+
+          // 4) Persist bbox & other fields
+          const payload = {
+            bbox: analysis.bbox,
+            category: analysis.category,
+            color_hex: analysis.colorHex ?? null,
+            color_name: analysis.colorName ?? null,
+            yolos_top_labels: analysis.yolosTopLabels ?? null,
+            yolos_result: analysis.result ?? null
+          };
+
+          const { error: upErr } = await supabase.from('items').update(payload).eq('id', id);
+          if (upErr) throw upErr;
+
+          // 5) Update local state so UI crops immediately
+          setItems(prev => prev.map(it => it.id === id ? { ...it, ...payload } : it));
+          ok++;
+        } catch (e) {
+          console.error("[Backfill] failed for", id, e);
+          fail++;
+        }
+
+        // 6) Throttle to be kind to the edge function (adjust if needed)
+        await new Promise(r => setTimeout(r, 400));
+      }
+
+      toast({ title: "Backfill complete", description: `Success: ${ok}, Failed: ${fail}` });
+    } catch (e: any) {
+      toast({ title: "Backfill error", description: e.message, variant: "destructive" });
+    } finally {
+      setIsBackfilling(false);
+    }
+  }
+
+  const allItems = [...uploadingItems.map(u => ({
     ...u, 
     isUploading: true, 
     image_path: '', 
@@ -433,6 +499,10 @@ export default function Closet({ user }: ClosetProps) {
                       <CheckSquare className="w-4 h-4 mr-2" />
                       Select Items
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => reanalyzeMissing(50)} disabled={isBackfilling}>
+                      {isBackfilling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+                      {isBackfilling ? "Reanalyzing…" : "Reanalyze missing"}
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </>
@@ -469,6 +539,15 @@ export default function Closet({ user }: ClosetProps) {
                 <Button onClick={toggleSelectionMode} disabled={items.length === 0} variant="outline" className="flex items-center gap-2">
                   <CheckSquare className="w-4 h-4" />
                   Select
+                </Button>
+                <Button
+                  onClick={() => reanalyzeMissing(50)}
+                  variant="secondary"
+                  disabled={isBackfilling}
+                  className="flex items-center gap-2"
+                >
+                  {isBackfilling ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  {isBackfilling ? "Reanalyzing…" : "Reanalyze missing"}
                 </Button>
                 <Button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2">
                   <Upload className="w-4 h-4" />
