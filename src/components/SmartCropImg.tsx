@@ -2,35 +2,59 @@ import React from "react";
 
 type Props = {
   src: string;
-  bbox?: number[] | null; // normalized [x, y, w, h]
+  bbox?: number[] | null; // may be [x,y,w,h] or [x1,y1,x2,y2], pixels or normalized
   paddingPct?: number;
   className?: string;
   alt?: string;
 };
 
-function toXYWH(b?: number[] | null): number[] | null {
+function clamp01(n: number) {
+  return Math.min(1, Math.max(0, n));
+}
+
+function toXYWH(b?: number[] | null, iw?: number, ih?: number): number[] | null {
   if (!b || b.length !== 4) return null;
   const arr = b.map(Number);
   if (!arr.every(Number.isFinite)) return null;
 
   const [x1, y1, x2, y2] = arr;
-  const in01 = arr.every(v => v >= 0 && v <= 1);
+  const anyPixels = arr.some(v => v > 1);
 
-  if (in01) {
-    // If the values look like [x, y, w, h] and fit within the unit square
-    if (x1 + x2 <= 1 && y1 + y2 <= 1) {
-      if (x2 > 0 && y2 > 0) return [x1, y1, x2, y2];
-      return null;
-    }
-
-    // Otherwise treat as [x1, y1, x2, y2]
+  if (anyPixels) {
+    if (!iw || !ih) return null;
+    // Assume pixel space
     if (x2 > x1 && y2 > y1) {
-      const w = x2 - x1;
-      const h = y2 - y1;
-      if (w > 0 && h > 0) return [x1, y1, w, h];
+      // xyxy pixels
+      const x = clamp01(x1 / iw);
+      const y = clamp01(y1 / ih);
+      const w = clamp01((x2 - x1) / iw);
+      const h = clamp01((y2 - y1) / ih);
+      if (w <= 0 || h <= 0) return null;
+      return [x, y, w, h];
     }
+    // xywh pixels
+    const x = clamp01(x1 / iw);
+    const y = clamp01(y1 / ih);
+    const w = clamp01(x2 / iw);
+    const h = clamp01(y2 / ih);
+    if (w <= 0 || h <= 0) return null;
+    return [x, y, w, h];
   }
 
+  const in01 = arr.every(v => v >= 0 && v <= 1);
+  if (!in01) return null;
+
+  // Try interpreting as [x,y,w,h] with clamping to bounds
+  const w1 = Math.min(x2, 1 - x1);
+  const h1 = Math.min(y2, 1 - y1);
+  if (w1 > 0 && h1 > 0) return [x1, y1, w1, h1];
+
+  // Fallback: treat as [x1,y1,x2,y2]
+  if (x2 > x1 && y2 > y1) {
+    const w = clamp01(x2 - x1);
+    const h = clamp01(y2 - y1);
+    if (w > 0 && h > 0) return [clamp01(x1), clamp01(y1), w, h];
+  }
   // Anything else (pixels or malformed) -> ignore to prevent snap
   return null;
 }
@@ -68,7 +92,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         return;
       }
 
-      const safe = toXYWH(bbox as any);
+      const safe = toXYWH(bbox as any, iw, ih);
       if (!safe) {
         // Fallback: non-distorting contain
         setStyle({
