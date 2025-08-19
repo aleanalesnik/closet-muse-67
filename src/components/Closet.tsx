@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
-import { waitUntilPublic, analyzeImage } from '@/lib/yolos';
+import { waitUntilPublic, analyzeImage, normalizeBbox } from '@/lib/yolos';
 import { getDominantColor, snapToPalette } from '@/lib/color';
 import SmartCropImg from '@/components/SmartCropImg';
 import ItemCard from '@/components/ItemCard';
@@ -87,9 +87,8 @@ export default function Closet({ user }: ClosetProps) {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      const itemsData = data || [];
+      const itemsData = (data || []).map(it => ({ ...it, bbox: normalizeBbox(it.bbox) }));
       setItems(itemsData);
-
 
       const imagePaths = itemsData.map(item => item.image_path).filter(Boolean);
       if (imagePaths.length > 0) {
