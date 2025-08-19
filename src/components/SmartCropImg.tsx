@@ -185,19 +185,11 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(function SmartCro
       const offsetX = targetCx - bboxCx;
       const offsetY = targetCy - bboxCy;
 
-      // Keep the image within the card's bounds so it can't disappear off-screen.
-      // For an absolutely positioned bitmap, valid translate ranges are:
-      //   X: [cw - scaledW, 0]
-      //   Y: [ch - scaledH, 0]
-      const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-      const tx = clamp(offsetX, cw - scaledW, 0);
-      const ty = clamp(offsetY, ch - scaledH, 0);
-
       setStyle({
         width: scaledW,
         height: scaledH,
         position: "absolute",
-        transform: `translate(${tx}px, ${ty}px)`,
+        transform: `translate(${offsetX}px, ${offsetY}px)`,
         transformOrigin: "0 0",
         willChange: "transform",
         objectFit: "fill",
