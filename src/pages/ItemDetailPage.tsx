@@ -36,6 +36,7 @@ type ItemRow = {
   color_name: string | null;
   color_hex: string | null;
   image_path: string;
+  created_at: string;
   bbox?:
     | { xmin: number; ymin: number; xmax: number; ymax: number }
     | number[]
@@ -354,6 +355,12 @@ export default function ItemDetailPage() {
                 <span className="font-mono">{colorHex}</span>
               </div>
             )}
+          </div>
+
+          <div className="pt-4 border-t">
+            <div className="text-xs text-muted-foreground">
+              Added {new Date(item.created_at).toLocaleDateString()}
+            </div>
           </div>
         </div>
       </div>
