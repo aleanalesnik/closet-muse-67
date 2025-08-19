@@ -51,13 +51,8 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
   // Convert bbox to normalized [x,y,w,h] if available
   const xywh = toXYWH(bbox);
   
-  // DEBUG: Log what we're getting
-  console.log('[SmartCrop] Raw bbox:', bbox);
-  console.log('[SmartCrop] Processed xywh:', xywh);
-  
   if (!xywh) {
     // No valid bbox, show regular image
-    console.log('[SmartCrop] No valid bbox, showing regular image');
     return (
       <div className={`relative overflow-hidden ${className}`}>
         <img
@@ -76,34 +71,10 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     );
   }
 
-  // Apply smart cropping with positioning and scaling
+  // Simple approach: use object-position to center on the bounding box
   const [x, y, w, h] = xywh;
-  
-  console.log('[SmartCrop] Applying smart crop with bbox:', { x, y, w, h });
-  
-  // Add padding to the detection area
-  const padding = paddingPct;
-  const paddedX = Math.max(0, x - w * padding);
-  const paddedY = Math.max(0, y - h * padding);
-  const paddedW = Math.min(1 - paddedX, w * (1 + padding * 2));
-  const paddedH = Math.min(1 - paddedY, h * (1 + padding * 2));
-  
-  // Calculate scale to zoom into the padded region
-  const scaleX = 1 / paddedW;
-  const scaleY = 1 / paddedH;
-  const scale = Math.max(scaleX, scaleY); // Use max to ensure full coverage
-  
-  // Calculate position to center the cropped area
-  const translateX = -paddedX * 100;
-  const translateY = -paddedY * 100;
-  
-  console.log('[SmartCrop] Transform values:', { 
-    scale: scale.toFixed(2), 
-    translateX: translateX.toFixed(2), 
-    translateY: translateY.toFixed(2),
-    paddedW: paddedW.toFixed(3),
-    paddedH: paddedH.toFixed(3)
-  });
+  const centerX = (x + w/2) * 100;
+  const centerY = (y + h/2) * 100;
   
   return (
     <div className={`relative overflow-hidden ${className}`}>
@@ -116,8 +87,7 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          transform: `scale(${scale}) translate(${translateX / scale}%, ${translateY / scale}%)`,
-          transformOrigin: "0 0"
+          objectPosition: `${centerX}% ${centerY}%`
         }}
       />
     </div>
