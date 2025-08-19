@@ -1,5 +1,5 @@
 // supabase/functions/sila-model-debugger/index.ts
-// YOLOS (bbox) + CLIP (coarse family tie-breaker) + optional Grounding-DINO fallback
+// YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
 
 const BUILD = "sila-debugger-2025-08-18f"; // update when redeploying
@@ -37,7 +37,6 @@ type ReqBody = {
 // --- Env (required) ---
 const HF_ENDPOINT_URL = Deno.env.get("HF_ENDPOINT_URL") ?? "";
 const HF_TOKEN        = Deno.env.get("HF_TOKEN") ?? "";
-const HF_CLIP_MODEL   = Deno.env.get("HF_CLIP_MODEL") ?? "openai/clip-vit-base-patch32";
 const HF_GDINO_MODEL  = Deno.env.get("HF_GDINO_MODEL") ?? "IDEA-Research/grounding-dino-tiny";
 
 // --- Env (tunable knobs learned from your tests; safe defaults) ---
@@ -247,32 +246,6 @@ async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
   return await hfRes.json();
 }
 
-// CLIP as coarse-family helper using zero-shot classification
-async function callCLIP(dataUrl: string): Promise<string> {
-  const labels = ["Tops","Bottoms","Outerwear","Dress","Bags","Shoes","Accessories"];
-  try {
-    const response = await fetch("https://api-inference.huggingface.co/models/facebook/bart-large-mnli", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${HF_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: "This is a clothing item",
-        parameters: { candidate_labels: labels }
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`CLIP error ${response.status}: ${await response.text().catch(() => "<no body>")}`);
-    }
-    const result = await response.json();
-    if (result.labels && result.labels.length > 0) return result.labels[0];
-    return "Clothing";
-  } catch (e) {
-    console.log(`[WARN] CLIP classification failed: ${e}, falling back to YOLO vote`);
-    return "Clothing"; // fallback
-  }
-}
 
 async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
   const prompts = {
@@ -342,15 +315,12 @@ Deno.serve(async (req) => {
 
     const baseT = typeof body.threshold === "number" ? body.threshold : 0.12;
 
-    // --- Parallel API calls to reduce latency ---
+    // --- YOLOS processing only ---
     console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
     
-    // Just use YOLOS for now - much faster and more reliable
+    // Just use YOLOS - much faster and more reliable
     let preds = await callHF(dataUrl, baseT);
     console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
-    
-    // Skip CLIP entirely for speed
-    const clipFamily = "Clothing";
 
     const SMALL_LABELS = new Set([
       "shoe","bag, wallet","belt","glasses","sunglasses","hat","watch","tie","sock","tights, stockings","leg warmer"
@@ -381,22 +351,14 @@ Deno.serve(async (req) => {
     const accish  = preds.some(p => /belt|glasses|sunglasses|hat|watch|tie/i.test(p.label));
 
     // Final category decision (layered)
-    const FAMILIES_SMALL    = new Set(["Bags","Shoes","Accessories"]);
-    const FAMILIES_GARMENTS = new Set(["Tops","Bottoms","Dress","Outerwear"]);
-
     let category = yoloFamily;
 
     // 1) Soft-force small items when present
     if (bagish) category = "Bags";
     else if (shoeish && category !== "Bags") category = "Shoes";
 
-    // 2) If YOLO says garment but CLIP says small item, let CLIP flip
-    const yoloIsGarment = FAMILIES_GARMENTS.has(yoloFamily);
-    const clipIsSmall   = FAMILIES_SMALL.has(clipFamily);
-    if (clipIsSmall && yoloIsGarment) category = clipFamily;
-
-    // 3) If YOLO had no usable primary, trust CLIP
-    if (!primary) category = clipFamily;
+    // 2) If YOLO had no usable primary, fall back to "Clothing"
+    if (!primary && category === "Clothing") category = "Clothing";
 
     console.log(`[PERF] Category decision completed at ${performance.now() - t0}ms`);
 
@@ -411,6 +373,7 @@ Deno.serve(async (req) => {
     }
 
     // If none and small item, use GDINO fallback (but only if really necessary)
+    const FAMILIES_SMALL = new Set(["Bags","Shoes","Accessories"]);
     if (!bbox && FAMILIES_SMALL.has(category) && !primary) {
       console.log(`[PERF] Using GDINO fallback for ${category} at ${performance.now() - t0}ms`);
       try {
@@ -456,7 +419,7 @@ Deno.serve(async (req) => {
       latencyMs,
       model: "valentinafeve/yolos-fashionpedia",
       debug: {
-        yoloFamily, clipFamily, bagish, shoeish, accish,
+        yoloFamily, bagish, shoeish, accish,
         VOTE_MIN_SCORE, SMALL_FAMILY_BOOST, BAG_FORCE_MIN, SHOE_FORCE_MIN,
         topYoloLabels: sanitized.slice(0,5).map(d => ({label:d.label, score:d.score}))
       }
