@@ -103,8 +103,6 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
           display: "block",
           opacity: 1
         });
-        return;
-      }
         setIsReady(true);
         return;
       }
