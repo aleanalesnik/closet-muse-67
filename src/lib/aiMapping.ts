@@ -21,11 +21,11 @@ export function mapLabel(label: string):
   if (/boots?/.test(s))                       return { category: "shoes", subcategory: "boots" };
   if (/(sneaker|trainer|shoe)/.test(s))       return { category: "shoes", subcategory: "sneakers" };
   if (/dress/.test(s))                        return { category: "dress", subcategory: "dress" };
-  if (/skirt/.test(s))                        return { category: "bottom", subcategory: "skirt" };
-  if (/(jeans|pants|trousers)/.test(s))       return { category: "bottom", subcategory: "trousers" };
-  if (/shorts/.test(s))                       return { category: "bottom", subcategory: "shorts" };
-  if (/(t-?shirt|tee)/.test(s))               return { category: "top", subcategory: "t-shirt" };
-  if (/(sweater|knit|jumper)/.test(s))        return { category: "top", subcategory: "sweater" };
+  if (/skirt/.test(s))                        return { category: "bottoms", subcategory: "skirt" };
+  if (/(jeans|pants|trousers)/.test(s))       return { category: "bottoms", subcategory: "trousers" };
+  if (/shorts/.test(s))                       return { category: "bottoms", subcategory: "shorts" };
+  if (/(t-?shirt|tee)/.test(s))               return { category: "tops", subcategory: "t-shirt" };
+  if (/(sweater|knit|jumper)/.test(s))        return { category: "tops", subcategory: "sweater" };
   if (/(jacket|coat|blazer|outerwear)/.test(s)) return { category: "outerwear", subcategory: "jacket" };
 
   // unknown = clothing, but still garment-level
