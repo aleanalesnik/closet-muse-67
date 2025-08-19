@@ -57,7 +57,9 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
   className = "", 
   alt = "" 
 }, ref) => {
+  // Create a local ref for internal use
   const localImgRef = React.useRef<HTMLImageElement>(null);
+  const [isReady, setIsReady] = React.useState(false);
   const [style, setStyle] = React.useState<React.CSSProperties>({ 
     opacity: 0,
     width: "100%", 
@@ -65,12 +67,12 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
     objectFit: "contain", 
     objectPosition: "center" 
   });
-
+  
   React.useLayoutEffect(() => {
     const img = localImgRef.current;
     if (!img) return;
 
-    let rafId = 0;
+    let debounceTimer: NodeJS.Timeout;
 
     function apply() {
       const container = img.parentElement!;
@@ -82,11 +84,17 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       const iw = img.naturalWidth || 0;
       const ih = img.naturalHeight || 0;
 
-      if (iw === 0 || ih === 0 || cw === 0 || ch === 0) return;
+      // Don't process if image or container dimensions aren't ready yet
+      if (iw === 0 || ih === 0 || cw === 0 || ch === 0) {
+        return;
+      }
 
       const safe = toXYWH(bbox as any, iw, ih);
       if (!safe) {
-        console.warn("[SmartCrop] invalid or missing bbox", { bbox, iw, ih, cw, ch, src });
+        // Only warn if a bbox was present but couldn't be parsed
+        if (bbox != null) {
+          console.warn("[SmartCrop] bbox present but invalid", { bbox, iw, ih, cw, ch, src });
+        }
         setStyle({
           width: "100%",
           height: "100%",
@@ -97,23 +105,31 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         });
         return;
       }
+        setIsReady(true);
+        return;
+      }
 
       const [x, y, w, h] = safe;
-
-      const pad = 1 + paddingPct;
+      
+      // Calculate scale to fit the bbox with padding in the container
+      const pad = 1 + paddingPct; // e.g., 1.10 for 10% slack
       const bboxPixelW = w * iw;
       const bboxPixelH = h * ih;
       const scale = Math.min(cw / (bboxPixelW * pad), ch / (bboxPixelH * pad));
 
+      // Scale the entire image
       const scaledImageWidth = iw * scale;
       const scaledImageHeight = ih * scale;
-
+      
+      // Calculate where the bbox center should be (center of container)
       const targetBboxCenterX = cw / 2;
       const targetBboxCenterY = ch / 2;
-
+      
+      // Calculate where the bbox center currently is in the scaled image
       const currentBboxCenterX = (x + w / 2) * iw * scale;
       const currentBboxCenterY = (y + h / 2) * ih * scale;
-
+      
+      // Calculate offset to move bbox center to target center
       const offsetX = targetBboxCenterX - currentBboxCenterX;
       const offsetY = targetBboxCenterY - currentBboxCenterY;
 
@@ -121,34 +137,36 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
         width: scaledImageWidth,
         height: scaledImageHeight,
         position: "absolute",
-        transform: `translate(${offsetX}px, ${offsetY}px)`,
-        transformOrigin: "0 0",
-        willChange: "transform",
+        top: offsetY,
+        left: offsetX,
         objectFit: "fill",
+        transformOrigin: "0 0",
         display: "block",
         opacity: 1
       });
+      setIsReady(true);
     }
 
     const debouncedApply = () => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(apply);
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(apply, 5);
     };
 
+    // Set up both load and error handlers
     const handleLoad = () => {
-      // force reflow (Safari quirk)
-      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-      img.offsetHeight;
-      debouncedApply();
+      apply(); // No timeout needed
     };
 
     const handleError = () => {
+      // Image error occurred, show fallback
       setStyle(prev => ({ ...prev, opacity: 1 }));
+      setIsReady(true);
     };
 
     img.addEventListener('load', handleLoad);
     img.addEventListener('error', handleError);
-
+    
+    // Check if image is already loaded
     if (img.complete && img.naturalWidth > 0) {
       handleLoad();
     }
@@ -159,9 +177,9 @@ const SmartCropImg = React.forwardRef<HTMLImageElement, Props>(({
       }
     });
     resizeObserver.observe(img.parentElement!);
-
+    
     return () => {
-      cancelAnimationFrame(rafId);
+      clearTimeout(debounceTimer);
       resizeObserver.disconnect();
       img.removeEventListener('load', handleLoad);
       img.removeEventListener('error', handleError);
