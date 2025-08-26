@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
-import { waitUntilPublic, analyzeImage, normalizeBbox } from '@/lib/yolos';
+import { analyzeImage, normalizeBbox } from '@/lib/yolos';
 import { getDominantColor, snapToPalette } from '@/lib/color';
 import SmartCropImg from '@/components/SmartCropImg';
 import ItemCard from '@/components/ItemCard';
