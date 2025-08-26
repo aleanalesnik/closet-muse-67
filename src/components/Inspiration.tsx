@@ -55,7 +55,7 @@ export default function Inspiration({ user }: InspirationProps) {
     setUploading(true);
     try {
       // Call YOLOS analysis on the file directly
-      const analysis = await analyzeImage(file, { threshold: 0.5 });
+      const analysis = await analyzeImage(file, 0.5);
 
       toast({ 
         title: 'Photo processed', 
