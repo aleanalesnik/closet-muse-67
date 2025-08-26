@@ -1,7 +1,7 @@
 // supabase/functions/sila-model-debugger/index.ts
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
-const BUILD = "sila-debugger-2025-08-18e"; // update when redeploying
+const BUILD = "sila-debugger-2025-08-18f"; // update when redeploying
 
 // --- CORS ---
 const corsHeaders = {
@@ -66,11 +66,11 @@ function mapLabelToCategory(label: string): string | null {
   const CATEGORY_ALIASES: Record<string, string[]> = {
     Dress: ["dress","jumpsuit","romper"],
     Bottoms: ["skirt","pants","jeans","trousers","shorts","leggings","culottes"],
-    Tops: ["shirt","blouse","top","t-shirt","tee","sweatshirt","sweater","cardigan","polo","vest","hoodie","bodysuit","tank"],
+    Tops: ["shirt","blouse","top","t-shirt","tee","sweatshirt","sweater","cardigan","polo","vest","hoodie","bodysuit","tank","tank top"],
     Outerwear: ["jacket","coat","trench","puffer","parka","blazer","cape"],
     Shoes: ["shoe","sneaker","boot","heel","flat","sandal","loafer","mule","clog","ballet"],
-    Bags: ["bag","handbag","tote","shoulder","crossbody","clutch","wallet","satchel","hobo","backpack","mini bag"],
-    Accessories: ["belt","glove","scarf","umbrella","glasses","sunglasses","hat","beanie","tie","watch","headband","tights","stockings","sock","leg warmer","jewelry"],
+    Bags: ["bag","handbag","tote","shoulder","crossbody","clutch","wallet","satchel","hobo","backpack","mini bag","backpack"],
+    Accessories: ["belt","waist belt","glove","scarf","umbrella","glasses","sunglasses","hat","cap","baseball cap","beanie","tie","watch","headband","tights","stockings","sock","leg warmer","jewelry"],
   };
 
   for (const [cat, aliases] of Object.entries(CATEGORY_ALIASES)) {
@@ -157,9 +157,14 @@ function labelLooksLike(predLabel: string, family: string) {
   if (family === "Bags") return L.includes("bag") || L.includes("wallet");
   if (family === "Shoes") return L.includes("shoe") || L.includes("sneaker") || L.includes("boot") || L.includes("heel");
   if (family === "Accessories") return (
-    L.includes("belt") || L.includes("glasses") || L.includes("sunglasses") || L.includes("hat") || L.includes("watch") || L.includes("tie")
+    L.includes("belt") || L.includes("waist belt") || L.includes("glasses") ||
+    L.includes("sunglasses") || L.includes("hat") || L.includes("cap") ||
+    L.includes("watch") || L.includes("tie")
   );
-  if (family === "Tops") return L.includes("top") || L.includes("shirt") || L.includes("blouse") || L.includes("sweater") || L.includes("cardigan");
+  if (family === "Tops") return (
+    L.includes("top") || L.includes("shirt") || L.includes("blouse") ||
+    L.includes("sweater") || L.includes("cardigan") || L.includes("tank")
+  );
   if (family === "Bottoms") return L.includes("skirt") || L.includes("pants") || L.includes("shorts") || L.includes("jeans");
   if (family === "Dress") return L.includes("dress") || L.includes("jumpsuit") || L.includes("romper");
   if (family === "Outerwear") return L.includes("jacket") || L.includes("coat") || L.includes("trench") || L.includes("blazer") || L.includes("puffer");
