@@ -492,8 +492,8 @@ export default function Closet({ user }: ClosetProps) {
             <div key={item.id} className="relative group">
               {isUploading ? (
                 <Card className="overflow-hidden">
-                  <div className="aspect-square relative">
-                    <div className="w-full h-full bg-muted rounded-t-lg flex items-center justify-center">
+                  <div className="relative overflow-hidden rounded-xl bg-white border" style={{ aspectRatio: "4 / 3" }}>
+                    <div className="w-full h-full bg-muted flex items-center justify-center">
                       <div className="text-center">
                         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mx-auto mb-2" />
                         <div className="text-xs text-muted-foreground px-2">
@@ -502,8 +502,10 @@ export default function Closet({ user }: ClosetProps) {
                       </div>
                     </div>
                   </div>
-                  <CardContent className="p-4">
-                    <h3 className="font-medium text-sm mb-2 line-clamp-2">{item.title || 'Untitled'}</h3>
+                  <CardContent className="p-3 sm:p-4">
+                    <div className="flex flex-wrap gap-1">
+                      {/* Empty badges space to maintain consistent spacing */}
+                    </div>
                   </CardContent>
                 </Card>
               ) : (
