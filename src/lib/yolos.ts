@@ -16,6 +16,7 @@ export type EdgeResponse = {
   colorName?: string | null;
   colorHex?: string | null;
   yolosTopLabels?: string[] | null;
+  details?: string[] | null;   // <-- YOLOS part/detail labels
   result?: EdgeDet[];         // <-- optional detector results
 };
 

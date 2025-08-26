@@ -407,6 +407,11 @@ Deno.serve(async (req) => {
 
     const trimmed = sanitized.filter(p => p.box !== null);
 
+    // Extract detail labels (part labels from YOLOS predictions)
+    const details = preds
+      .filter(p => PART_LABELS.has(p.label.toLowerCase()))
+      .map(p => p.label);
+
     const latencyMs = Math.round(performance.now() - t0);
     return json({
       status: "success",
@@ -417,6 +422,7 @@ Deno.serve(async (req) => {
       colorName: null,              // Phase 1 can re-enable color extraction
       colorHex: null,
       yolosTopLabels: sanitized.slice(0,3).map(d => d.label),
+      details,                      // detail labels from YOLOS part predictions
       result: trimmed,              // [{score,label,box:[x,y,w,h]}...]
       latencyMs,
       model: "valentinafeve/yolos-fashionpedia",

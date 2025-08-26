@@ -198,6 +198,13 @@ export default function Closet({ user }: ClosetProps) {
       const analysis = await analyzeImage(file);
       console.info('[YOLOS] analysis result', analysis);
       
+      // Extract detail labels from YOLOS predictions
+      const DETAIL_LABELS = new Set([
+        "hood","collar","lapel","epaulette","sleeve","pocket","neckline","buckle","zipper",
+        "applique","bead","bow","flower","fringe","ribbon","rivet","ruffle","sequin","tassel"
+      ]);
+      const details = analysis.yolosTopLabels?.filter(l => DETAIL_LABELS.has(l.toLowerCase())) ?? null;
+      
       // Build payload using edge response directly 
       const payload = {
         title: analysis.proposedTitle ?? "Item",
@@ -205,6 +212,7 @@ export default function Closet({ user }: ClosetProps) {
         color_hex: analysis.colorHex ?? detectedColorHex,
         color_name: analysis.colorName ?? detectedColorName,
         bbox: analysis.bbox,
+        details,
         yolos_top_labels: analysis.yolosTopLabels ?? null
       };
       console.info('[YOLOS] persist', payload);

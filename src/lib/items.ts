@@ -62,3 +62,23 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   
   return { itemId, imagePath, fn: { ok: true, result: fnData.result } };
 }
+
+export async function findMatchingItems({ category, details }: { category: string; details?: string[] }) {
+  // Check authentication
+  const { data: { user }, error: userErr } = await supabase.auth.getUser();
+  if (userErr || !user) throw new Error("Not signed in");
+
+  let query = supabase
+    .from("items")
+    .select("*")
+    .eq("owner", user.id)
+    .eq("category", category);
+  
+  if (details && details.length > 0) {
+    query = query.contains("details", details);
+  }
+  
+  const { data, error } = await query.limit(6);
+  if (error) throw error;
+  return data || [];
+}
