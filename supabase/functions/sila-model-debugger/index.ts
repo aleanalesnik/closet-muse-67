@@ -303,19 +303,21 @@ Deno.serve(async (req) => {
   try {
     if (req.method !== "POST") return json({ status: "fail", error: "Method not allowed", build: BUILD }, 405);
 
-    const body = (await req.json()) as ReqBody;
+    // Accept binary data directly
+    const buf = new Uint8Array(await req.arrayBuffer());
+    const mime = req.headers.get("content-type") ?? "image/jpeg";
+    
+    // Convert binary to data URL for HF API
+    let binary = "";
+    for (let i = 0; i < buf.byteLength; i++) binary += String.fromCharCode(buf[i]);
+    const dataUrl = `data:${mime};base64,${btoa(binary)}`;
+    
+    // Get image dimensions
+    const dims = getImageDims(buf) ?? { width: 1, height: 1 };
+    const imgW = dims.width;
+    const imgH = dims.height;
 
-    let img: { dataUrl: string; width: number; height: number };
-    if (body.imageUrl) {
-      img = await urlToDataUrl(body.imageUrl);
-    } else if (body.base64Image?.startsWith("data:")) {
-      img = dataUrlInfo(body.base64Image);
-    } else {
-      return json({ status: "fail", error: "No imageUrl or base64Image provided", build: BUILD }, 400);
-    }
-    const { dataUrl, width: imgW, height: imgH } = img;
-
-    const baseT = typeof body.threshold === "number" ? body.threshold : 0.12;
+    const baseT = 0.12; // Default threshold since we're not parsing JSON body
     // --- YOLOS processing only ---
     console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
     // Just use YOLOS - much faster and more reliable
@@ -403,6 +405,11 @@ Deno.serve(async (req) => {
 
     const trimmed = sanitized.filter(p => p.box !== null);
 
+    // Extract detail labels (part labels) from predictions
+    const details = preds
+      .filter(p => PART_LABELS.has(p.label.toLowerCase()))
+      .map(p => p.label);
+
     const latencyMs = Math.round(performance.now() - t0);
     return json({
       status: "success",
@@ -413,6 +420,7 @@ Deno.serve(async (req) => {
       colorName: null,              // Phase 1 can re-enable color extraction
       colorHex: null,
       yolosTopLabels: sanitized.slice(0,3).map(d => d.label),
+      details,                      // YOLOS part/detail labels
       result: trimmed,              // [{score,label,box:[x,y,w,h]}...]
       latencyMs,
       model: "valentinafeve/yolos-fashionpedia",

@@ -62,21 +62,36 @@ export default function Inspiration({ user }: InspirationProps) {
         description: `Found ${analysis.result?.length || 0} items`
       });
 
-      // Create detections from YOLOS results
-      const newDetections: Detection[] = (analysis.result || []).map((item: any, idx: number) => ({
-        id: `detection-${idx}`,
-        query_id: 'current',
-        label: item.label,
-        score: item.score,
-        category: analysis.category,
-        details: analysis.details,
-        bbox_x: item.box?.[0] || 0,
-        bbox_y: item.box?.[1] || 0, 
-        bbox_width: item.box?.[2] || 0,
-        bbox_height: item.box?.[3] || 0,
-        color_name: analysis.colorName,
-        color_hex: analysis.colorHex
-      }));
+      // Create detections from YOLOS results - use main category for all detections
+      const newDetections: Detection[] = analysis.result && analysis.result.length > 0 
+        ? analysis.result.map((item: any, idx: number) => ({
+            id: `detection-${idx}`,
+            query_id: 'current',
+            label: item.label,
+            score: item.score,
+            category: analysis.category, // Use the main category from analysis
+            details: analysis.details,
+            bbox_x: item.box?.[0] || 0,
+            bbox_y: item.box?.[1] || 0, 
+            bbox_width: item.box?.[2] || 0,
+            bbox_height: item.box?.[3] || 0,
+            color_name: analysis.colorName,
+            color_hex: analysis.colorHex
+          }))
+        : [{
+            id: 'detection-0',
+            query_id: 'current',
+            label: analysis.category || 'Item',
+            score: 1.0,
+            category: analysis.category,
+            details: analysis.details,
+            bbox_x: 0,
+            bbox_y: 0,
+            bbox_width: 1,
+            bbox_height: 1,
+            color_name: analysis.colorName,
+            color_hex: analysis.colorHex
+          }];
 
       setDetections(newDetections);
       

@@ -100,6 +100,7 @@ export type Database = {
           color_hex: string | null
           color_name: string | null
           created_at: string | null
+          details: string[] | null
           id: string
           image_path: string
           owner: string
@@ -119,6 +120,7 @@ export type Database = {
           color_hex?: string | null
           color_name?: string | null
           created_at?: string | null
+          details?: string[] | null
           id?: string
           image_path: string
           owner?: string
@@ -138,6 +140,7 @@ export type Database = {
           color_hex?: string | null
           color_name?: string | null
           created_at?: string | null
+          details?: string[] | null
           id?: string
           image_path?: string
           owner?: string
