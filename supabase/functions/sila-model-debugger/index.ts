@@ -1,7 +1,7 @@
 // supabase/functions/sila-model-debugger/index.ts
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
-const BUILD = "sila-debugger-2025-08-18g"; // update when redeploying
+const BUILD = "sila-debugger-2025-08-18h"; // update when redeploying
 
 // --- CORS ---
 const corsHeaders = {
