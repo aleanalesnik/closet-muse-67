@@ -2,7 +2,7 @@
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
 
-const BUILD = "sila-debugger-2025-08-26b"; // update when redeploying
+const BUILD = "sila-debugger-2025-08-26c"; // update when redeploying
 
 // --- CORS ---
 const corsHeaders = {
@@ -329,6 +329,28 @@ Deno.serve(async (req) => {
 
     // Health check endpoint
     if (req.method === "GET") {
+      const url = new URL(req.url);
+      
+      // Debug endpoint to check secrets
+      if (url.pathname.includes('/debug')) {
+        return json({
+          status: "debug",
+          build: BUILD,
+          timestamp: new Date().toISOString(),
+          secrets: {
+            HF_ENDPOINT_URL: HF_ENDPOINT_URL ? `SET (${HF_ENDPOINT_URL.substring(0, 50)}...)` : "MISSING",
+            HF_TOKEN: HF_TOKEN ? `SET (${HF_TOKEN.substring(0, 10)}...)` : "MISSING",
+            HF_GDINO_MODEL: HF_GDINO_MODEL
+          },
+          env_vars: {
+            VOTE_MIN_SCORE,
+            SMALL_FAMILY_BOOST,
+            BAG_FORCE_MIN,
+            SHOE_FORCE_MIN
+          }
+        });
+      }
+      
       return json({
         status: "healthy",
         build: BUILD,

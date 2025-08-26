@@ -6,6 +6,7 @@ import { analyzeImage, normalizeBbox } from '@/lib/yolos';
 import { getDominantColor, snapToPalette } from '@/lib/color';
 import SmartCropImg from '@/components/SmartCropImg';
 import ItemCard from '@/components/ItemCard';
+import EdgeFunctionDebugger from '@/components/EdgeFunctionDebugger';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -472,6 +473,13 @@ export default function Closet({ user }: ClosetProps) {
           </div>
         )}
       </div>
+
+      {/* Debug Component - only show when items are empty for testing */}
+      {items.length === 0 && (
+        <div className="mb-8">
+          <EdgeFunctionDebugger />
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 md:gap-6">
         {allItems.map((item) => {
