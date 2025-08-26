@@ -2,7 +2,7 @@
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
 
-const BUILD = "sila-debugger-2025-08-26a"; // update when redeploying
+const BUILD = "sila-debugger-2025-08-26b"; // update when redeploying
 
 // --- CORS ---
 const corsHeaders = {
@@ -236,18 +236,39 @@ async function urlToDataUrl(url: string): Promise<{ dataUrl: string; width: numb
 
 // --- HF calls (binary for YOLOS, JSON for CLIP/GDINO) ---
 async function callHF(bytes: Uint8Array, mime: string, threshold: number): Promise<HFPred[]> {
-  const hfRes = await fetch(HF_ENDPOINT_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${HF_TOKEN}`,
-      "Content-Type": mime,
-    },
-    body: bytes,
-  });
-  if (!hfRes.ok) {
-    throw new Error(`HF error ${hfRes.status}: ${await hfRes.text().catch(() => "<no body>")}`);
+  console.log(`[HF] Calling HF_ENDPOINT_URL: ${HF_ENDPOINT_URL ? "SET" : "MISSING"}`);
+  console.log(`[HF] HF_TOKEN: ${HF_TOKEN ? "SET" : "MISSING"}`);
+  console.log(`[HF] Request: ${mime}, ${bytes.length} bytes`);
+  
+  if (!HF_ENDPOINT_URL || !HF_TOKEN) {
+    throw new Error(`Missing required env vars - HF_ENDPOINT_URL: ${HF_ENDPOINT_URL ? "SET" : "MISSING"}, HF_TOKEN: ${HF_TOKEN ? "SET" : "MISSING"}`);
   }
-  return await hfRes.json();
+  
+  try {
+    const hfRes = await fetch(HF_ENDPOINT_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${HF_TOKEN}`,
+        "Content-Type": mime,
+      },
+      body: bytes,
+    });
+    
+    console.log(`[HF] Response status: ${hfRes.status}`);
+    
+    if (!hfRes.ok) {
+      const errorText = await hfRes.text().catch(() => "<no body>");
+      console.log(`[HF] Error response: ${errorText}`);
+      throw new Error(`HF error ${hfRes.status}: ${errorText}`);
+    }
+    
+    const result = await hfRes.json();
+    console.log(`[HF] Success: ${Array.isArray(result) ? result.length : "non-array"} results`);
+    return result;
+  } catch (error) {
+    console.error(`[HF] Exception in callHF:`, error);
+    throw error;
+  }
 }
 async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
   const prompts = {
@@ -331,9 +352,17 @@ Deno.serve(async (req) => {
     const baseT = Number(req.headers.get("x-threshold") ?? 0.12);
     // --- YOLOS processing only ---
     console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
+    console.log(`[DEBUG] Image dimensions: ${imgW}x${imgH}, threshold: ${baseT}`);
+    
     // Just use YOLOS - much faster and more reliable
-    let preds = await callHF(buf, mime, baseT);
-    console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
+    let preds;
+    try {
+      preds = await callHF(buf, mime, baseT);
+      console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
+    } catch (hfError) {
+      console.error(`[ERROR] HF API call failed:`, hfError);
+      throw new Error(`HuggingFace API failed: ${hfError.message}`);
+    }
     const SMALL_LABELS = new Set([
       "shoe","bag, wallet","belt","glasses","sunglasses","hat","watch","tie","sock","tights, stockings","leg warmer"
     ]);
