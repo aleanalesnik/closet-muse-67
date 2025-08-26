@@ -62,6 +62,7 @@ export async function analyzeImage(file: File, { threshold = 0.12 } = {}): Promi
     method: "POST",
     headers: {
       "Content-Type": file.type || "image/jpeg",
+      "x-threshold": threshold.toString(),
     },
     body: await file.arrayBuffer(),
   });
