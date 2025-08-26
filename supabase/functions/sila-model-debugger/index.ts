@@ -2,16 +2,7 @@
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
 
-// Dynamic BUILD string generator
-function generateBuild(): string {
-  const now = new Date();
-  const date = now.toISOString().split('T')[0]; // YYYY-MM-DD
-  const hour = now.getHours();
-  const letter = String.fromCharCode(97 + (hour % 26)); // a-z based on hour
-  return `sila-debugger-${date}${letter}`;
-}
-
-const BUILD = generateBuild();
+const BUILD = "sila-debugger-2025-08-18i"; // update when redeploying
 
 // --- CORS ---
 const corsHeaders = {
