@@ -1,7 +1,7 @@
 // supabase/functions/sila-model-debugger/index.ts
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
-const BUILD = "sila-debugger-2025-08-18f"; // update when redeploying
+const BUILD = "sila-debugger-2025-08-18g"; // update when redeploying
 
 // --- CORS ---
 const corsHeaders = {
@@ -233,15 +233,16 @@ async function urlToDataUrl(url: string): Promise<{ dataUrl: string; width: numb
   return { dataUrl: `data:${mime};base64,${btoa(binary)}`, width: dims.width, height: dims.height };
 }
 
-// --- HF calls (binary for YOLOS, JSON for CLIP/GDINO) ---
-async function callHF(bytes: Uint8Array, mime: string, threshold: number): Promise<HFPred[]> {
+// --- HF calls (JSON dataURL for YOLOS, JSON for CLIP/GDINO) ---
+async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
+  const body: HFPayload = { inputs: dataUrl, parameters: { threshold } };
   const hfRes = await fetch(HF_ENDPOINT_URL, {
-    method: "POST", 
+    method: "POST",
     headers: {
       "Authorization": `Bearer ${HF_TOKEN}`,
-      "Content-Type": mime,
+      "Content-Type": "application/json",
     },
-    body: bytes,
+    body: JSON.stringify(body),
   });
   if (!hfRes.ok) {
     throw new Error(`HF error ${hfRes.status}: ${await hfRes.text().catch(() => "<no body>")}`);
@@ -302,28 +303,23 @@ Deno.serve(async (req) => {
   try {
     if (req.method !== "POST") return json({ status: "fail", error: "Method not allowed", build: BUILD }, 405);
 
-    // Accept binary data directly
-    const buf = new Uint8Array(await req.arrayBuffer());
-    const mime = req.headers.get("content-type") ?? "image/jpeg";
-    
-    if (buf.length === 0) {
-      return json({ status: "fail", error: "No image data provided", build: BUILD }, 400);
+    const body = (await req.json()) as ReqBody;
+
+    let img: { dataUrl: string; width: number; height: number };
+    if (body.imageUrl) {
+      img = await urlToDataUrl(body.imageUrl);
+    } else if (body.base64Image?.startsWith("data:")) {
+      img = dataUrlInfo(body.base64Image);
+    } else {
+      return json({ status: "fail", error: "No imageUrl or base64Image provided", build: BUILD }, 400);
     }
+    const { dataUrl, width: imgW, height: imgH } = img;
 
-    const dims = getImageDims(buf) ?? { width: 1, height: 1 };
-    const imgW = dims.width;
-    const imgH = dims.height;
-    
-    // Create data URL for internal processing
-    let binary = "";
-    for (let i = 0; i < buf.byteLength; i++) binary += String.fromCharCode(buf[i]);
-    const dataUrl = `data:${mime};base64,${btoa(binary)}`;
-
-    const baseT = 0.12; // Default threshold for binary uploads
+    const baseT = typeof body.threshold === "number" ? body.threshold : 0.12;
     // --- YOLOS processing only ---
     console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
-    // Use binary data for YOLOS - much faster and more reliable
-    let preds = await callHF(buf, mime, baseT);
+    // Just use YOLOS - much faster and more reliable
+    let preds = await callHF(dataUrl, baseT);
     console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
     const SMALL_LABELS = new Set([
       "shoe","bag, wallet","belt","glasses","sunglasses","hat","watch","tie","sock","tights, stockings","leg warmer"
@@ -336,7 +332,7 @@ Deno.serve(async (req) => {
     if (!primary && hasSmallItems) {
       console.log(`[PERF] Second YOLOS pass needed at ${performance.now() - t0}ms`);
       const t2 = Math.max(0.06, baseT * 0.5);
-      const preds2 = await callHF(buf, mime, t2);
+      const preds2 = await callHF(dataUrl, t2);
       if (preds2?.length) preds = preds2;
       primary = pickPrimaryGarment(preds, t2);
       console.log(`[PERF] Second YOLOS completed at ${performance.now() - t0}ms`);
@@ -407,11 +403,6 @@ Deno.serve(async (req) => {
 
     const trimmed = sanitized.filter(p => p.box !== null);
 
-    // Extract detail labels (part labels from YOLOS predictions)
-    const details = preds
-      .filter(p => PART_LABELS.has(p.label.toLowerCase()))
-      .map(p => p.label);
-
     const latencyMs = Math.round(performance.now() - t0);
     return json({
       status: "success",
@@ -422,7 +413,6 @@ Deno.serve(async (req) => {
       colorName: null,              // Phase 1 can re-enable color extraction
       colorHex: null,
       yolosTopLabels: sanitized.slice(0,3).map(d => d.label),
-      details,                      // detail labels from YOLOS part predictions
       result: trimmed,              // [{score,label,box:[x,y,w,h]}...]
       latencyMs,
       model: "valentinafeve/yolos-fashionpedia",
