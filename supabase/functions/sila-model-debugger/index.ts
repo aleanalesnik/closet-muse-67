@@ -2,12 +2,12 @@
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
 
-const BUILD = "sila-debugger-2025-08-18j"; // update when redeploying
+const BUILD = "sila-debugger-2025-08-26a"; // update when redeploying
 
 // --- CORS ---
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-threshold",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
