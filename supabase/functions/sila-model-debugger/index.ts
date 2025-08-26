@@ -310,6 +310,21 @@ Deno.serve(async (req) => {
 
   const t0 = performance.now();
   try {
+    // Handle OPTIONS for CORS
+    if (req.method === "OPTIONS") {
+      return new Response(null, { headers: corsHeaders });
+    }
+
+    // Health check endpoint
+    if (req.method === "GET") {
+      return json({
+        status: "healthy",
+        build: BUILD,
+        timestamp: new Date().toISOString(),
+        uptime: performance.now()
+      });
+    }
+
     if (req.method !== "POST") return json({ status: "fail", error: "Method not allowed", build: BUILD }, 405);
 
     // Accept binary data directly
