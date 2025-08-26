@@ -190,23 +190,12 @@ export default function Closet({ user }: ClosetProps) {
         )
       );
       
-      // Get public URL and wait until it's accessible
-      const { data: pub } = supabase.storage.from('sila').getPublicUrl(imagePath);
-      const publicUrl = pub.publicUrl;
       console.info('[FLOW] have path', imagePath);
-      console.info('[FLOW] publicUrl', publicUrl);
       
-      await waitUntilPublic(publicUrl);
+      console.info('[YOLOS] analyzing image with binary API');
       
-      console.info('[YOLOS] analyzing image with new API');
-      
-      // Get JWT token and function URL
-      const { data: { session } } = await supabase.auth.getSession();
-      const jwt = session?.access_token;
-      if (!jwt) throw new Error("Not authenticated");
-      
-      const functionUrl = `https://tqbjbugwwffdfhihpkcg.supabase.co/functions/v1/sila-model-debugger`;
-      const analysis = await analyzeImage(functionUrl, publicUrl, jwt);
+      // Analyze image directly from file (no need to wait for public URL)
+      const analysis = await analyzeImage(file);
       console.info('[YOLOS] analysis result', analysis);
       
       // Build payload using edge response directly 

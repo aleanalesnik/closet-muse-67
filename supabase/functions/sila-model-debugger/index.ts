@@ -233,16 +233,15 @@ async function urlToDataUrl(url: string): Promise<{ dataUrl: string; width: numb
   return { dataUrl: `data:${mime};base64,${btoa(binary)}`, width: dims.width, height: dims.height };
 }
 
-// --- HF calls (JSON dataURL for YOLOS, JSON for CLIP/GDINO) ---
-async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
-  const body: HFPayload = { inputs: dataUrl, parameters: { threshold } };
+// --- HF calls (binary for YOLOS, JSON for CLIP/GDINO) ---
+async function callHF(bytes: Uint8Array, mime: string, threshold: number): Promise<HFPred[]> {
   const hfRes = await fetch(HF_ENDPOINT_URL, {
-    method: "POST",
+    method: "POST", 
     headers: {
       "Authorization": `Bearer ${HF_TOKEN}`,
-      "Content-Type": "application/json",
+      "Content-Type": mime,
     },
-    body: JSON.stringify(body),
+    body: bytes,
   });
   if (!hfRes.ok) {
     throw new Error(`HF error ${hfRes.status}: ${await hfRes.text().catch(() => "<no body>")}`);
@@ -303,23 +302,28 @@ Deno.serve(async (req) => {
   try {
     if (req.method !== "POST") return json({ status: "fail", error: "Method not allowed", build: BUILD }, 405);
 
-    const body = (await req.json()) as ReqBody;
-
-    let img: { dataUrl: string; width: number; height: number };
-    if (body.imageUrl) {
-      img = await urlToDataUrl(body.imageUrl);
-    } else if (body.base64Image?.startsWith("data:")) {
-      img = dataUrlInfo(body.base64Image);
-    } else {
-      return json({ status: "fail", error: "No imageUrl or base64Image provided", build: BUILD }, 400);
+    // Accept binary data directly
+    const buf = new Uint8Array(await req.arrayBuffer());
+    const mime = req.headers.get("content-type") ?? "image/jpeg";
+    
+    if (buf.length === 0) {
+      return json({ status: "fail", error: "No image data provided", build: BUILD }, 400);
     }
-    const { dataUrl, width: imgW, height: imgH } = img;
 
-    const baseT = typeof body.threshold === "number" ? body.threshold : 0.12;
+    const dims = getImageDims(buf) ?? { width: 1, height: 1 };
+    const imgW = dims.width;
+    const imgH = dims.height;
+    
+    // Create data URL for internal processing
+    let binary = "";
+    for (let i = 0; i < buf.byteLength; i++) binary += String.fromCharCode(buf[i]);
+    const dataUrl = `data:${mime};base64,${btoa(binary)}`;
+
+    const baseT = 0.12; // Default threshold for binary uploads
     // --- YOLOS processing only ---
     console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
-    // Just use YOLOS - much faster and more reliable
-    let preds = await callHF(dataUrl, baseT);
+    // Use binary data for YOLOS - much faster and more reliable
+    let preds = await callHF(buf, mime, baseT);
     console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
     const SMALL_LABELS = new Set([
       "shoe","bag, wallet","belt","glasses","sunglasses","hat","watch","tie","sock","tights, stockings","leg warmer"
@@ -332,7 +336,7 @@ Deno.serve(async (req) => {
     if (!primary && hasSmallItems) {
       console.log(`[PERF] Second YOLOS pass needed at ${performance.now() - t0}ms`);
       const t2 = Math.max(0.06, baseT * 0.5);
-      const preds2 = await callHF(dataUrl, t2);
+      const preds2 = await callHF(buf, mime, t2);
       if (preds2?.length) preds = preds2;
       primary = pickPrimaryGarment(preds, t2);
       console.log(`[PERF] Second YOLOS completed at ${performance.now() - t0}ms`);

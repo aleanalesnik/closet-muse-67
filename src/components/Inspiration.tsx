@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Upload, Loader2, Search, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { analyzeImage } from '@/lib/yolos';
 
 
 interface InspirationQuery {
@@ -195,38 +196,18 @@ export default function Inspiration({ user }: InspirationProps) {
         
       if (uploadError) throw uploadError;
 
-      // Get public URL
-      const { data: pub } = supabase.storage.from('sila').getPublicUrl(imagePath);
-      const imageUrl = pub.publicUrl;
-      
-      // Call YOLOS detection
-      const projectRef = import.meta.env.VITE_SUPABASE_URL?.match(/https:\/\/([^.]+)/)?.[1];
-      if (!projectRef) throw new Error("Could not determine project ref");
-      
-      const detectRes = await fetch(`https://${projectRef}.functions.supabase.co/sila-model-debugger`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-        },
-        body: JSON.stringify({ imageUrl, threshold: 0.5 }),
-      });
-
-      if (!detectRes.ok) {
-        throw new Error(`Detection failed: ${detectRes.status}`);
-      }
-
-      const detectJson = await detectRes.json();
-      if (detectJson.status !== 'success') {
-        throw new Error(`Detection failed: ${detectJson.error || 'Unknown error'}`);
-      }
+      // Call YOLOS detection directly with binary file
+      const detectJson = await analyzeImage(file, { threshold: 0.5 });
 
       toast({ 
         title: 'Photo processed', 
         description: `Found ${detectJson.result?.length || 0} items`
       });
 
+      // Get public URL for display
+      const { data: pub } = supabase.storage.from('sila').getPublicUrl(imagePath);
+      const imageUrl = pub.publicUrl;
+      
       // Update detections state directly
       const newDetections: Detection[] = (detectJson.result || []).map((item: any, idx: number) => ({
         id: `${objectId}-${idx}`,

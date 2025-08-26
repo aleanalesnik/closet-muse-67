@@ -54,15 +54,15 @@ export function normalizeBbox(b: any): BBoxArray | null {
   return null;
 }
 
-export async function analyzeImage(functionUrl: string, imageUrl: string, jwt: string): Promise<EdgeResponse> {
+export async function analyzeImage(file: File, { threshold = 0.12 } = {}): Promise<EdgeResponse> {
+  const functionUrl = `https://tqbjbugwwffdfhihpkcg.supabase.co/functions/v1/sila-model-debugger`;
+  
   const r = await fetch(functionUrl, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${jwt}`,
-      apikey: jwt,
+      "Content-Type": file.type || "image/jpeg",
     },
-    body: JSON.stringify({ imageUrl }),
+    body: await file.arrayBuffer(),
   });
 
   if (!r.ok) {
