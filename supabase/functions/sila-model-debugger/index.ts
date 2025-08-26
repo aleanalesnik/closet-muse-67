@@ -456,6 +456,18 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     const latencyMs = Math.round(performance.now() - t0);
-    return json({ status: "fail", stop: "exception", latencyMs, error: String(err), build: BUILD }, 500);
+    console.error("Edge function error:", err, {
+      message: err?.message,
+      stack: err?.stack,
+      name: err?.name
+    });
+    return json({ 
+      status: "fail", 
+      stop: "exception", 
+      latencyMs, 
+      error: String(err), 
+      errorMessage: err?.message,
+      build: BUILD 
+    }, 500);
   }
 });
