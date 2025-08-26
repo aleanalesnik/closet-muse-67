@@ -1,7 +1,17 @@
 // supabase/functions/sila-model-debugger/index.ts
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
-const BUILD = "sila-debugger-2025-08-18h"; // update when redeploying
+
+// Dynamic BUILD string generator
+function generateBuild(): string {
+  const now = new Date();
+  const date = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  const hour = now.getHours();
+  const letter = String.fromCharCode(97 + (hour % 26)); // a-z based on hour
+  return `sila-debugger-${date}${letter}`;
+}
+
+const BUILD = generateBuild();
 
 // --- CORS ---
 const corsHeaders = {
@@ -305,11 +315,6 @@ Deno.serve(async (req) => {
     // Accept binary data directly
     const buf = new Uint8Array(await req.arrayBuffer());
     const mime = req.headers.get("content-type") ?? "image/jpeg";
-    
-    // Convert binary to data URL for HF API
-    let binary = "";
-    for (let i = 0; i < buf.byteLength; i++) binary += String.fromCharCode(buf[i]);
-    const dataUrl = `data:${mime};base64,${btoa(binary)}`;
     
     // Get image dimensions
     const dims = getImageDims(buf) ?? { width: 1, height: 1 };

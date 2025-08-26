@@ -198,12 +198,8 @@ export default function Closet({ user }: ClosetProps) {
       const analysis = await analyzeImage(file);
       console.info('[YOLOS] analysis result', analysis);
       
-      // Extract detail labels from YOLOS predictions
-      const DETAIL_LABELS = new Set([
-        "hood","collar","lapel","epaulette","sleeve","pocket","neckline","buckle","zipper",
-        "applique","bead","bow","flower","fringe","ribbon","rivet","ruffle","sequin","tassel"
-      ]);
-      const details = analysis.yolosTopLabels?.filter(l => DETAIL_LABELS.has(l.toLowerCase())) ?? null;
+      // Use details directly from YOLOS analysis
+      const details = analysis.details ?? null;
       
       // Build payload using edge response directly 
       const payload = {
