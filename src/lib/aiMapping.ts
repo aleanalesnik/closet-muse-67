@@ -70,55 +70,16 @@ export function makeTitle(opts: {
 function capitalize(s:string){ return s ? s[0].toUpperCase()+s.slice(1) : s; }
 
 // Color from FULL image (not bbox), then snap to fixed palette
-export const PALETTE = [
-  { name: "Black",  hex: "#000000" },
-  { name: "Grey",   hex: "#D9D9D9" },
-  { name: "White",  hex: "#FFFFFF" },
-  { name: "Beige",  hex: "#EEE3D1" },
-  { name: "Brown",  hex: "#583B30" },
-  { name: "Purple", hex: "#8023AD" },
-  { name: "Blue",   hex: "#3289E2" },
-  { name: "Navy",   hex: "#144679" },
-  { name: "Green",  hex: "#39C161" },
-  { name: "Yellow", hex: "#FCD759" },
-  { name: "Orange", hex: "#FB7C00" },
-  { name: "Pink",   hex: "#F167A7" },
-  { name: "Red",    hex: "#CD0002" },
-  { name: "Maroon", hex: "#720907" },
-  // NOTE: Silver/Gold gradients are not snap targets; we'll skip them.
-];
+import { getDominantColor, snapToPalette as snapToColorPalette, PALETTE } from './color.js';
 
 export async function dominantHexFromUrl(url: string): Promise<string> {
-  const img = await loadImage(url);
-  const { canvas, ctx } = makeCanvas(64, 64);
-  ctx.drawImage(img, 0, 0, 64, 64);
-  const { data } = ctx.getImageData(0, 0, 64, 64);
-  let r=0,g=0,b=0,c=0, whites=0;
-  for (let i=0;i<data.length;i+=4){
-    const R=data[i], G=data[i+1], B=data[i+2], A=data[i+3];
-    if (A<10) continue;
-    // drop near-white bg and near-transparent
-    const max = Math.max(R,G,B), min = Math.min(R,G,B);
-    const sat = (max-min)/Math.max(max,1);
-    const light = (max+min)/2/255;
-    if (light>0.97 && sat<0.08){ whites++; continue; }  // ignore white bg
-    r+=R; g+=G; b+=B; c++;
-  }
-  if (whites > c * 3) return "#FFFFFF";
-  if (c===0){ r=255; g=255; b=255; c=1; }
-  r=Math.round(r/c); g=Math.round(g/c); b=Math.round(b/c);
-  return rgbToHex(r,g,b);
+  const rgb = await getDominantColor(url);
+  return rgbToHex(rgb.r, rgb.g, rgb.b);
 }
 
-export function snapToPalette(hex: string){
-  const [r,g,b] = hexToRgb(hex);
-  let best=0, bestD=1e9;
-  for (let i=0;i<PALETTE.length;i++){
-    const [pr,pg,pb] = hexToRgb(PALETTE[i].hex);
-    const d = (r-pr)**2 + (g-pg)**2 + (b-pb)**2;
-    if (d<bestD){ best=i; bestD=d; }
-  }
-  return PALETTE[best];
+export function snapToPalette(hex: string) {
+  const [r, g, b] = hexToRgb(hex);
+  return snapToColorPalette({ r, g, b });
 }
 
 // Convert numeric bbox array to BBox object

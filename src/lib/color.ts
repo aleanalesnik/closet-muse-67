@@ -5,20 +5,20 @@
 export type RGB = { r: number; g: number; b: number };
 
 export const PALETTE: { name: string; hex: string }[] = [
-  { name: "Black",   hex: "#000000" },
-  { name: "Grey",    hex: "#D9D9D9" },
-  { name: "White",   hex: "#FFFFFF" },
-  { name: "Beige",   hex: "#EEE3D1" },
-  { name: "Brown",   hex: "#583B30" },
-  { name: "Purple",  hex: "#8023AD" },
-  { name: "Blue",    hex: "#3289E2" },
-  { name: "Navy",    hex: "#144679" },
-  { name: "Green",   hex: "#39C161" },
-  { name: "Yellow",  hex: "#FCD759" },
-  { name: "Orange",  hex: "#FB7C00" },
-  { name: "Pink",    hex: "#F167A7" },
-  { name: "Red",     hex: "#CD0002" },
-  { name: "Maroon",  hex: "#720907" },
+  { name: "Black",   hex: "#1A1A1A" },
+  { name: "Grey",    hex: "#808080" },
+  { name: "White",   hex: "#F8F8F8" },
+  { name: "Beige",   hex: "#D2B48C" },
+  { name: "Brown",   hex: "#8B4513" },
+  { name: "Purple",  hex: "#8A2BE2" },
+  { name: "Blue",    hex: "#4169E1" },
+  { name: "Navy",    hex: "#2C3E50" },
+  { name: "Green",   hex: "#228B22" },
+  { name: "Yellow",  hex: "#FFD700" },
+  { name: "Orange",  hex: "#FF8C00" },
+  { name: "Pink",    hex: "#FF69B4" },
+  { name: "Red",     hex: "#DC143C" },
+  { name: "Maroon",  hex: "#800000" },
 ];
 
 export async function getDominantColor(src: string, size = 64): Promise<RGB> {
@@ -63,14 +63,60 @@ export async function getDominantColor(src: string, size = 64): Promise<RGB> {
 }
 
 export function snapToPalette(rgb: RGB) {
-  // Convert to LAB for perceptual distance
+  // Convert to HSL for hue/saturation/lightness analysis
+  const hsl = rgbToHsl(rgb);
+  
+  // Apply heuristics for extreme cases
+  if (hsl.l > 0.95) return PALETTE.find(p => p.name === "White")!;
+  if (hsl.l < 0.05) return PALETTE.find(p => p.name === "Black")!;
+  if (hsl.s < 0.1) {
+    if (hsl.l < 0.2) return PALETTE.find(p => p.name === "Black")!;
+    if (hsl.l > 0.8) return PALETTE.find(p => p.name === "White")!;
+    return PALETTE.find(p => p.name === "Grey")!;
+  }
+  
+  // For colored items, use hue-based mapping with LAB distance fallback
+  const h = hsl.h;
+  const hueRanges: Record<string, [number, number]> = {
+    "Red": [345, 15],
+    "Orange": [15, 45], 
+    "Yellow": [45, 75],
+    "Green": [75, 165],
+    "Blue": [165, 240],
+    "Purple": [240, 290],
+    "Pink": [290, 345],
+    "Maroon": [345, 15], // darker reds
+    "Navy": [165, 240], // darker blues
+  };
+  
+  // Check hue ranges first for strong colors
+  if (hsl.s > 0.3) {
+    for (const [colorName, [min, max]] of Object.entries(hueRanges)) {
+      const inRange = max > min ? (h >= min && h <= max) : (h >= min || h <= max);
+      if (inRange) {
+        const candidate = PALETTE.find(p => p.name === colorName);
+        if (candidate) {
+          // For red/maroon and blue/navy, use lightness to distinguish
+          if (colorName === "Red" && hsl.l < 0.3) {
+            return PALETTE.find(p => p.name === "Maroon")!;
+          }
+          if (colorName === "Blue" && hsl.l < 0.3) {
+            return PALETTE.find(p => p.name === "Navy")!;
+          }
+          return candidate;
+        }
+      }
+    }
+  }
+  
+  // Fallback to LAB distance for edge cases
   const lab = rgbToLab(rgb);
   let best = PALETTE[0], bestD = Infinity;
   for (const p of PALETTE) {
     const d = deltaE(lab, rgbToLab(hexToRgb(p.hex)));
     if (d < bestD) { bestD = d; best = p; }
   }
-  return best; // { name, hex }
+  return best;
 }
 
 // --- color math (sRGB → XYZ → LAB) ---
@@ -111,6 +157,34 @@ function deltaE(lab1: any, lab2: any) {
   const da = lab1.a - lab2.a;
   const db = lab1.b - lab2.b;
   return Math.sqrt(dL*dL + da*da + db*db);
+}
+
+function rgbToHsl(rgb: RGB): { h: number; s: number; l: number } {
+  const r = rgb.r / 255;
+  const g = rgb.g / 255;
+  const b = rgb.b / 255;
+  
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  
+  if (max === min) {
+    return { h: 0, s: 0, l }; // achromatic
+  }
+  
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  
+  let h: number;
+  switch (max) {
+    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+    case g: h = (b - r) / d + 2; break;
+    case b: h = (r - g) / d + 4; break;
+    default: h = 0;
+  }
+  h /= 6;
+  
+  return { h: h * 360, s, l };
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
