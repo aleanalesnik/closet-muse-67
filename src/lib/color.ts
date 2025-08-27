@@ -33,7 +33,7 @@ export async function getDominantColor(src: string, size = 64): Promise<RGB> {
   ctx.drawImage(img, 0, 0, w, h);
 
   const { data } = ctx.getImageData(0, 0, w, h);
-  let r = 0, g = 0, b = 0, n = 0;
+  let r = 0, g = 0, b = 0, n = 0, whites = 0;
 
   for (let i = 0; i < data.length; i += 4) {
     const R = data[i], G = data[i + 1], B = data[i + 2], A = data[i + 3];
@@ -42,9 +42,13 @@ export async function getDominantColor(src: string, size = 64): Promise<RGB> {
     const max = Math.max(R, G, B);
     const min = Math.min(R, G, B);
     const light = (max + min) / 2 / 255;
-    if (light > 0.97) continue;
+    if (light > 0.97) { whites++; continue; }
 
     r += R; g += G; b += B; n++;
+  }
+
+  if (whites > n * 3) {
+    return { r: 255, g: 255, b: 255 };
   }
 
   if (n === 0) {
