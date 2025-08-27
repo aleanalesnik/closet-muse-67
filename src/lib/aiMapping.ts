@@ -100,8 +100,7 @@ export async function dominantHexFromUrl(url: string): Promise<string> {
     // drop near-white bg and near-transparent
     const max = Math.max(R,G,B), min = Math.min(R,G,B);
     const sat = (max-min)/Math.max(max,1);
-    const light = (max+min)/2/255;
-    if (light>0.97 && sat<0.08) continue;  // ignore white bg
+    if (max>245 && sat<0.08) continue;  // ignore white bg
     r+=R; g+=G; b+=B; c++;
   }
   if (c===0){ r=255; g=255; b=255; c=1; }

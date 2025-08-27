@@ -1,13 +1,12 @@
 // supabase/functions/sila-model-debugger/index.ts
 // YOLOS (bbox) + optional Grounding-DINO fallback
 // Returns normalized boxes in [x, y, w, h] (0..1)
-
-const BUILD = "sila-debugger-2025-08-26d"; // update when redeploying
+const BUILD = "sila-debugger-2025-08-18e"; // update when redeploying
 
 // --- CORS ---
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-threshold",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -67,11 +66,11 @@ function mapLabelToCategory(label: string): string | null {
   const CATEGORY_ALIASES: Record<string, string[]> = {
     Dress: ["dress","jumpsuit","romper"],
     Bottoms: ["skirt","pants","jeans","trousers","shorts","leggings","culottes"],
-    Tops: ["shirt","blouse","top","t-shirt","tee","sweatshirt","sweater","cardigan","polo","vest","hoodie","bodysuit","tank","tank top"],
+    Tops: ["shirt","blouse","top","t-shirt","tee","sweatshirt","sweater","cardigan","polo","vest","hoodie","bodysuit","tank"],
     Outerwear: ["jacket","coat","trench","puffer","parka","blazer","cape"],
     Shoes: ["shoe","sneaker","boot","heel","flat","sandal","loafer","mule","clog","ballet"],
-    Bags: ["bag","handbag","tote","shoulder","crossbody","clutch","wallet","satchel","hobo","backpack","mini bag","backpack"],
-    Accessories: ["belt","waist belt","glove","scarf","umbrella","glasses","sunglasses","hat","cap","baseball cap","beanie","tie","watch","headband","tights","stockings","sock","leg warmer","jewelry"],
+    Bags: ["bag","handbag","tote","shoulder","crossbody","clutch","wallet","satchel","hobo","backpack","mini bag"],
+    Accessories: ["belt","glove","scarf","umbrella","glasses","sunglasses","hat","beanie","tie","watch","headband","tights","stockings","sock","leg warmer","jewelry"],
   };
 
   for (const [cat, aliases] of Object.entries(CATEGORY_ALIASES)) {
@@ -120,7 +119,7 @@ function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
     const scoreDiff = b.score - a.score;
     if (scoreDiff !== 0) return scoreDiff;
     const areaA = (a.box.xmax - a.box.xmin) * (a.box.ymax - a.box.ymin);
-    const areaB = (b.box.xmax - b.box.xmin) * (b.box.ymax - b.box.ymin);
+    const areaB = (b.box.xmax - b.box.xmin) * (b.box.ymax - b.ymin);
     return areaB - areaA;
   });
 
@@ -158,14 +157,9 @@ function labelLooksLike(predLabel: string, family: string) {
   if (family === "Bags") return L.includes("bag") || L.includes("wallet");
   if (family === "Shoes") return L.includes("shoe") || L.includes("sneaker") || L.includes("boot") || L.includes("heel");
   if (family === "Accessories") return (
-    L.includes("belt") || L.includes("waist belt") || L.includes("glasses") ||
-    L.includes("sunglasses") || L.includes("hat") || L.includes("cap") ||
-    L.includes("watch") || L.includes("tie")
+    L.includes("belt") || L.includes("glasses") || L.includes("sunglasses") || L.includes("hat") || L.includes("watch") || L.includes("tie")
   );
-  if (family === "Tops") return (
-    L.includes("top") || L.includes("shirt") || L.includes("blouse") ||
-    L.includes("sweater") || L.includes("cardigan") || L.includes("tank")
-  );
+  if (family === "Tops") return L.includes("top") || L.includes("shirt") || L.includes("blouse") || L.includes("sweater") || L.includes("cardigan");
   if (family === "Bottoms") return L.includes("skirt") || L.includes("pants") || L.includes("shorts") || L.includes("jeans");
   if (family === "Dress") return L.includes("dress") || L.includes("jumpsuit") || L.includes("romper");
   if (family === "Outerwear") return L.includes("jacket") || L.includes("coat") || L.includes("trench") || L.includes("blazer") || L.includes("puffer");
@@ -234,26 +228,20 @@ async function urlToDataUrl(url: string): Promise<{ dataUrl: string; width: numb
   return { dataUrl: `data:${mime};base64,${btoa(binary)}`, width: dims.width, height: dims.height };
 }
 
-// --- HF calls (binary for YOLOS, JSON for CLIP/GDINO) ---
-async function callHF(bytes: Uint8Array, mime: string, threshold: number): Promise<HFPred[]> {
-  if (!HF_ENDPOINT_URL || !HF_TOKEN) {
-    throw new Error(`Missing required env vars - HF_ENDPOINT_URL: ${HF_ENDPOINT_URL ? "SET" : "MISSING"}, HF_TOKEN: ${HF_TOKEN ? "SET" : "MISSING"}`);
-  }
-  
+// --- HF calls (JSON dataURL for YOLOS, JSON for CLIP/GDINO) ---
+async function callHF(dataUrl: string, threshold: number): Promise<HFPred[]> {
+  const body: HFPayload = { inputs: dataUrl, parameters: { threshold } };
   const hfRes = await fetch(HF_ENDPOINT_URL, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${HF_TOKEN}`,
-      "Content-Type": mime,
+      "Content-Type": "application/json",
     },
-    body: bytes,
+    body: JSON.stringify(body),
   });
-  
   if (!hfRes.ok) {
-    const errorText = await hfRes.text().catch(() => "<no body>");
-    throw new Error(`HF error ${hfRes.status}: ${errorText}`);
+    throw new Error(`HF error ${hfRes.status}: ${await hfRes.text().catch(() => "<no body>")}`);
   }
-  
   return await hfRes.json();
 }
 async function callGroundingDINO(dataUrl: string, category: string): Promise<[number,number,number,number] | null> {
@@ -303,70 +291,30 @@ async function callGroundingDINO(dataUrl: string, category: string): Promise<[nu
 }
 
 // --- Serve ---
-export async function handler(req: Request): Promise<Response> {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return json({ status: "ok" });
 
   const t0 = performance.now();
   try {
-    // Handle OPTIONS for CORS
-    if (req.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders });
-    }
-
-    // Health check endpoint
-    if (req.method === "GET") {
-      return json({
-        status: "healthy",
-        build: BUILD,
-        timestamp: new Date().toISOString(),
-        uptime: performance.now()
-      });
-    }
-
     if (req.method !== "POST") return json({ status: "fail", error: "Method not allowed", build: BUILD }, 405);
 
-    // --- Parse request body (binary or JSON) ---
-    let buf: Uint8Array;
-    let mime: string;
-    let imgW: number;
-    let imgH: number;
-    let baseT = 0.12;
+    const body = (await req.json()) as ReqBody;
 
-    const ctype = req.headers.get("content-type") || "";
-    if (ctype.includes("application/json")) {
-      const body: ReqBody = await req.json();
-      baseT = body.threshold ?? 0.12;
-      if (body.base64Image) {
-        const info = dataUrlInfo(body.base64Image);
-        const [, b64] = info.dataUrl.split(",", 2);
-        buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-        mime = info.dataUrl.match(/^data:(.*);base64/)?.[1] || "image/png";
-        imgW = info.width;
-        imgH = info.height;
-      } else if (body.imageUrl) {
-        const info = await urlToDataUrl(body.imageUrl);
-        const [, b64] = info.dataUrl.split(",", 2);
-        buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-        mime = info.dataUrl.match(/^data:(.*);base64/)?.[1] || "image/png";
-        imgW = info.width;
-        imgH = info.height;
-      } else {
-        console.log("[WARN] Missing image in JSON body");
-        return json({ status: "fail", error: "Missing image", build: BUILD }, 400);
-      }
+    let img: { dataUrl: string; width: number; height: number };
+    if (body.imageUrl) {
+      img = await urlToDataUrl(body.imageUrl);
+    } else if (body.base64Image?.startsWith("data:")) {
+      img = dataUrlInfo(body.base64Image);
     } else {
-      buf = new Uint8Array(await req.arrayBuffer());
-      mime = req.headers.get("content-type") ?? "image/jpeg";
-      const dims = getImageDims(buf) ?? { width: 1, height: 1 };
-      imgW = dims.width;
-      imgH = dims.height;
-      baseT = Number(req.headers.get("x-threshold") ?? 0.12);
+      return json({ status: "fail", error: "No imageUrl or base64Image provided", build: BUILD }, 400);
     }
+    const { dataUrl, width: imgW, height: imgH } = img;
+
+    const baseT = typeof body.threshold === "number" ? body.threshold : 0.12;
     // --- YOLOS processing only ---
     console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
-    
     // Just use YOLOS - much faster and more reliable
-    let preds = await callHF(buf, mime, baseT);
+    let preds = await callHF(dataUrl, baseT);
     console.log(`[PERF] YOLOS completed at ${performance.now() - t0}ms`);
     const SMALL_LABELS = new Set([
       "shoe","bag, wallet","belt","glasses","sunglasses","hat","watch","tie","sock","tights, stockings","leg warmer"
@@ -379,7 +327,7 @@ export async function handler(req: Request): Promise<Response> {
     if (!primary && hasSmallItems) {
       console.log(`[PERF] Second YOLOS pass needed at ${performance.now() - t0}ms`);
       const t2 = Math.max(0.06, baseT * 0.5);
-      const preds2 = await callHF(buf, mime, t2);
+      const preds2 = await callHF(dataUrl, t2);
       if (preds2?.length) preds = preds2;
       primary = pickPrimaryGarment(preds, t2);
       console.log(`[PERF] Second YOLOS completed at ${performance.now() - t0}ms`);
@@ -422,10 +370,6 @@ export async function handler(req: Request): Promise<Response> {
     if (!bbox && FAMILIES_SMALL.has(category) && !primary) {
       console.log(`[PERF] Using GDINO fallback for ${category} at ${performance.now() - t0}ms`);
       try {
-        // Convert binary back to data URL for GDINO (it still expects JSON)
-        let binary = "";
-        for (let i = 0; i < buf.byteLength; i++) binary += String.fromCharCode(buf[i]);
-        const dataUrl = `data:${mime};base64,${btoa(binary)}`;
         const fb = await callGroundingDINO(dataUrl, category);
         if (fb) {
           bbox = toNormBox(fb, imgW, imgH);
@@ -454,11 +398,6 @@ export async function handler(req: Request): Promise<Response> {
 
     const trimmed = sanitized.filter(p => p.box !== null);
 
-    // Extract detail labels (part labels) from predictions
-    const details = preds
-      .filter(p => PART_LABELS.has(p.label.toLowerCase()))
-      .map(p => p.label);
-
     const latencyMs = Math.round(performance.now() - t0);
     return json({
       status: "success",
@@ -469,7 +408,6 @@ export async function handler(req: Request): Promise<Response> {
       colorName: null,              // Phase 1 can re-enable color extraction
       colorHex: null,
       yolosTopLabels: sanitized.slice(0,3).map(d => d.label),
-      details,                      // YOLOS part/detail labels
       result: trimmed,              // [{score,label,box:[x,y,w,h]}...]
       latencyMs,
       model: "valentinafeve/yolos-fashionpedia",
@@ -482,20 +420,6 @@ export async function handler(req: Request): Promise<Response> {
 
   } catch (err) {
     const latencyMs = Math.round(performance.now() - t0);
-    console.error("Edge function error:", err, {
-      message: err?.message,
-      stack: err?.stack,
-      name: err?.name
-    });
-    return json({ 
-      status: "fail", 
-      stop: "exception", 
-      latencyMs, 
-      error: String(err), 
-      errorMessage: err?.message,
-      build: BUILD 
-    }, 500);
+    return json({ status: "fail", stop: "exception", latencyMs, error: String(err), build: BUILD }, 500);
   }
-}
-
-Deno.serve(handler);
+});

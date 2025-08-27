@@ -75,16 +75,16 @@ Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-trick
 ## Edge Functions
 
 **Active Functions:**
-- `sila-model-debugger` - YOLOS object detection using binary image uploads
+- `sila-model-debugger` - YOLOS object detection using public image URLs
 
 **Removed Functions (Jan 2025):**
 - `items-process` - Removed to simplify upload flow; YOLOS detection now handled client-side via sila-model-debugger
-- `inference-probe`, `inspiration-start`, `inspiration-run` - Consolidated into sila-model-debugger with binary upload workflow
+- `inference-probe`, `inspiration-start`, `inspiration-run` - Consolidated into sila-model-debugger with public URL workflow
 
 ## Testing Checklist
 
 ### Test 1: YOLOS Detection Test
-- [ ] Call the `sila-model-debugger` edge function with a binary image upload
+- [ ] Call the `sila-model-debugger` edge function with public image URL
 - [ ] Verify response contains detected items with bounding boxes
 - [ ] **SQL Verification**: No DB changes expected for detection test
 

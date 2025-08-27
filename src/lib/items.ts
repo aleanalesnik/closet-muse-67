@@ -1,8 +1,8 @@
-import { supabase } from "./supabase";
+import { supabase } from "@/lib/supabase";
 
-export async function uploadAndProcessItem(file: File, title?: string, client = supabase) {
+export async function uploadAndProcessItem(file: File, title?: string) {
   // Check authentication
-  const { data: { user }, error: userErr } = await client.auth.getUser();
+  const { data: { user }, error: userErr } = await supabase.auth.getUser();
   if (userErr || !user) throw new Error("Not signed in");
 
   // 2) make a storage path (keep bucket private)
@@ -11,14 +11,14 @@ export async function uploadAndProcessItem(file: File, title?: string, client = 
   const imagePath = `${user.id}/items/${objectId}.${ext}`;
 
   // Upload to storage
-  const { error: upErr } = await client.storage.from("sila").upload(imagePath, file, {
+  const { error: upErr } = await supabase.storage.from("sila").upload(imagePath, file, {
     contentType: file.type || `image/${ext}`,
     upsert: true
   });
   if (upErr) throw upErr;
 
   // 4) create DB row (so we have an item id & owner)
-  const { data: inserted, error: insErr } = await client
+  const { data: inserted, error: insErr } = await supabase
     .from("items")
     .insert({
       owner: user.id,
@@ -33,7 +33,7 @@ export async function uploadAndProcessItem(file: File, title?: string, client = 
   
 
   // 5) Get public URL for the uploaded image
-  const { data: urlData } = client.storage
+  const { data: urlData } = supabase.storage
     .from("sila")
     .getPublicUrl(imagePath);
   
@@ -61,24 +61,4 @@ export async function uploadAndProcessItem(file: File, title?: string, client = 
   }
   
   return { itemId, imagePath, fn: { ok: true, result: fnData.result } };
-}
-
-export async function findMatchingItems({ category, details }: { category: string; details?: string[] }, client = supabase) {
-  // Check authentication
-  const { data: { user }, error: userErr } = await client.auth.getUser();
-  if (userErr || !user) throw new Error("Not signed in");
-
-  let query = client
-    .from("items")
-    .select("*")
-    .eq("owner", user.id)
-    .eq("category", category);
-  
-  if (details && details.length > 0) {
-    query = query.contains("details", details);
-  }
-  
-  const { data, error } = await query.limit(6);
-  if (error) throw error;
-  return data || [];
 }

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { batchCreateSignedUrls } from '@/lib/storage';
-import { analyzeImage, normalizeBbox } from '@/lib/yolos';
+import { waitUntilPublic, analyzeImage, normalizeBbox } from '@/lib/yolos';
 import { getDominantColor, snapToPalette } from '@/lib/color';
 import SmartCropImg from '@/components/SmartCropImg';
 import ItemCard from '@/components/ItemCard';
@@ -190,16 +190,24 @@ export default function Closet({ user }: ClosetProps) {
         )
       );
       
+      // Get public URL and wait until it's accessible
+      const { data: pub } = supabase.storage.from('sila').getPublicUrl(imagePath);
+      const publicUrl = pub.publicUrl;
       console.info('[FLOW] have path', imagePath);
+      console.info('[FLOW] publicUrl', publicUrl);
       
-      console.info('[YOLOS] analyzing image with binary API');
+      await waitUntilPublic(publicUrl);
       
-      // Analyze image directly from file (no need to wait for public URL)
-      const analysis = await analyzeImage(file);
+      console.info('[YOLOS] analyzing image with new API');
+      
+      // Get JWT token and function URL
+      const { data: { session } } = await supabase.auth.getSession();
+      const jwt = session?.access_token;
+      if (!jwt) throw new Error("Not authenticated");
+      
+      const functionUrl = `https://tqbjbugwwffdfhihpkcg.supabase.co/functions/v1/sila-model-debugger`;
+      const analysis = await analyzeImage(functionUrl, publicUrl, jwt);
       console.info('[YOLOS] analysis result', analysis);
-      
-      // Use details directly from YOLOS analysis
-      const details = analysis.details ?? null;
       
       // Build payload using edge response directly 
       const payload = {
@@ -208,7 +216,6 @@ export default function Closet({ user }: ClosetProps) {
         color_hex: analysis.colorHex ?? detectedColorHex,
         color_name: analysis.colorName ?? detectedColorName,
         bbox: analysis.bbox,
-        details,
         yolos_top_labels: analysis.yolosTopLabels ?? null
       };
       console.info('[YOLOS] persist', payload);
