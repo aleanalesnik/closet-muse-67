@@ -93,7 +93,7 @@ export async function dominantHexFromUrl(url: string): Promise<string> {
   const { canvas, ctx } = makeCanvas(64, 64);
   ctx.drawImage(img, 0, 0, 64, 64);
   const { data } = ctx.getImageData(0, 0, 64, 64);
-  let r=0,g=0,b=0,c=0;
+  let r=0,g=0,b=0,c=0, whites=0;
   for (let i=0;i<data.length;i+=4){
     const R=data[i], G=data[i+1], B=data[i+2], A=data[i+3];
     if (A<10) continue;
@@ -101,9 +101,10 @@ export async function dominantHexFromUrl(url: string): Promise<string> {
     const max = Math.max(R,G,B), min = Math.min(R,G,B);
     const sat = (max-min)/Math.max(max,1);
     const light = (max+min)/2/255;
-    if (light>0.97 && sat<0.08) continue;  // ignore white bg
+    if (light>0.97 && sat<0.08){ whites++; continue; }  // ignore white bg
     r+=R; g+=G; b+=B; c++;
   }
+  if (whites > c * 3) return "#FFFFFF";
   if (c===0){ r=255; g=255; b=255; c=1; }
   r=Math.round(r/c); g=Math.round(g/c); b=Math.round(b/c);
   return rgbToHex(r,g,b);
