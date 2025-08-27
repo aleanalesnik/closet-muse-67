@@ -101,67 +101,69 @@ export function snapToPalette(rgb: RGB) {
   // Convert to HSL for hue/saturation/lightness analysis
   const hsl = rgbToHsl(rgb);
   
-  // Apply extreme lightness heuristics first
-  if (hsl.l > COLOR_THRESHOLDS.lightnessWhite) return PALETTE.find(p => p.name === "White")!;
-  if (hsl.l < COLOR_THRESHOLDS.lightnessBlack) return PALETTE.find(p => p.name === "Black")!;
-  
-  // Handle low-saturation (achromatic or near-achromatic) colors
-  if (hsl.s < COLOR_THRESHOLDS.saturationGrey) {
-    if (hsl.l < COLOR_THRESHOLDS.lightnessGreyBlack) return PALETTE.find(p => p.name === "Black")!;
-    if (hsl.l > COLOR_THRESHOLDS.lightnessGreyWhite) return PALETTE.find(p => p.name === "White")!;
-    
-    // Check for dark desaturated hues (Maroon, Navy, Brown)
-    const h = hsl.h;
-    const { lowSatHueRanges } = COLOR_THRESHOLDS;
-    
-    // Dark desaturated reds -> Maroon
-    const redInRange = lowSatHueRanges.Red[1] > lowSatHueRanges.Red[0] 
-      ? (h >= lowSatHueRanges.Red[0] && h <= lowSatHueRanges.Red[1])
-      : (h >= lowSatHueRanges.Red[0] || h <= lowSatHueRanges.Red[1]);
-    if (redInRange && hsl.l <= COLOR_THRESHOLDS.lightnessMaroonMax) {
-      return PALETTE.find(p => p.name === "Maroon")!;
-    }
-    
-    // Dark desaturated blues -> Navy
-    const blueInRange = h >= lowSatHueRanges.Blue[0] && h <= lowSatHueRanges.Blue[1];
-    if (blueInRange && hsl.l <= COLOR_THRESHOLDS.lightnessNavyMax) {
-      return PALETTE.find(p => p.name === "Navy")!;
-    }
-    
-    // Warm mid-tone desaturated colors -> Brown
-    const warmInRange = h >= lowSatHueRanges.Warm[0] && h <= lowSatHueRanges.Warm[1];
-    if (warmInRange && hsl.l > COLOR_THRESHOLDS.lightnessGreyBlack && hsl.l < COLOR_THRESHOLDS.lightnessGreyWhite) {
-      return PALETTE.find(p => p.name === "Brown")!;
-    }
-    
-    // Default to Grey for other low-saturation colors
+  // Apply heuristics for extreme cases
+  if (hsl.l > 0.95 && hsl.s < 0.1) return PALETTE.find(p => p.name === "White")!;
+  if (hsl.l < 0.05) return PALETTE.find(p => p.name === "Black")!;
+  if (hsl.s < 0.1) {
+    if (hsl.l < 0.2) return PALETTE.find(p => p.name === "Black")!;
+    if (hsl.l > 0.8) return PALETTE.find(p => p.name === "White")!;
     return PALETTE.find(p => p.name === "Grey")!;
   }
-  
-  // Handle Beige (warm, light, low-to-moderate saturation)
-  const h = hsl.h;
-  const beigeInRange = h >= COLOR_THRESHOLDS.hueRanges.Beige[0] && h <= COLOR_THRESHOLDS.hueRanges.Beige[1];
-  if (beigeInRange && hsl.l >= COLOR_THRESHOLDS.lightnessBeigeMin && hsl.s < COLOR_THRESHOLDS.saturationHueMap) {
+
+  // Warm, light hues often correspond to beige tones
+  if (hsl.h >= 15 && hsl.h <= 60 && hsl.l > 0.55 && hsl.s < 0.9) {
     return PALETTE.find(p => p.name === "Beige")!;
   }
   
-  // For colored items with sufficient saturation, use hue-based mapping
-  if (hsl.s >= COLOR_THRESHOLDS.saturationHueMap) {
-    for (const [colorName, [min, max]] of Object.entries(COLOR_THRESHOLDS.hueRanges)) {
-      // Skip Beige as it's handled above
-      if (colorName === "Beige") continue;
-      
+  // For colored items, use hue-based mapping with LAB distance fallback
+  const h = hsl.h;
+  const hueRanges: Record<string, [number, number]> = {
+    "Red": [345, 15],
+    "Orange": [15, 45],
+    "Yellow": [45, 75],
+    "Green": [75, 165],
+    "Blue": [165, 255],
+    "Purple": [255, 310],
+    "Pink": [290, 345],
+    "Maroon": [345, 15], // darker reds
+    "Navy": [165, 240], // darker blues
+  };
+  
+  // Check hue ranges first for strong colors
+  if (hsl.s > 0.15) {
+    for (const [colorName, [min, max]] of Object.entries(hueRanges)) {
       const inRange = max > min ? (h >= min && h <= max) : (h >= min || h <= max);
       if (inRange) {
+        if (colorName === "Purple" && h >= 290 && h <= 310 && hsl.s > 0.35) {
+          continue; // allow vibrant magentas to be handled by Pink
+        }
+
         const candidate = PALETTE.find(p => p.name === colorName);
         if (candidate) {
-          // For red/blue, use lightness to distinguish dark variants
-          if (colorName === "Red" && hsl.l <= COLOR_THRESHOLDS.lightnessMaroonMax) {
-            return PALETTE.find(p => p.name === "Maroon")!;
+          // Refine red/pink/maroon distinctions
+          if (colorName === "Red") {
+            if (hsl.l < 0.3) return PALETTE.find(p => p.name === "Maroon")!;
+            if (hsl.l >= 0.6) return PALETTE.find(p => p.name === "Pink")!;
           }
-          if (colorName === "Blue" && hsl.l <= COLOR_THRESHOLDS.lightnessNavyMax) {
-            return PALETTE.find(p => p.name === "Navy")!;
+
+          if (colorName === "Pink" && (hsl.s < 0.35 || hsl.l < 0.4)) {
+            return PALETTE.find(p => p.name === "Purple")!;
           }
+
+          if (colorName === "Blue") {
+            if (h >= 240 && h <= 255 && (rgb.r - rgb.g) > 10) {
+              return PALETTE.find(p => p.name === "Purple")!;
+            }
+            if (h >= 230 && h <= 255 && hsl.l > 0.8) {
+              return PALETTE.find(p => p.name === "Purple")!;
+            }
+            if (hsl.l < 0.2) return PALETTE.find(p => p.name === "Navy")!;
+          }
+
+          if (colorName === "Orange" && hsl.l < 0.4) {
+            return PALETTE.find(p => p.name === "Brown")!;
+          }
+
           return candidate;
         }
       }

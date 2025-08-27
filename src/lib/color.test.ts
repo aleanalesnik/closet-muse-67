@@ -2,6 +2,70 @@
 // Simple test runner without external dependencies
 import { snapToPalette, getDominantColor, PALETTE } from './color.js';
 
+// Helper to convert hex codes to RGB objects
+function hexToRgb(hex: string) {
+  const num = parseInt(hex.slice(1), 16);
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+
+// Common shade samples per color group
+const shadeGroups: Record<string, { name: string; hex: string }[]> = {
+  Blue: [
+    { name: 'Royal Blue', hex: '#4169E1' },
+    { name: 'Sky Blue', hex: '#87CEEB' },
+    { name: 'Baby Blue', hex: '#89CFF0' },
+    { name: 'Cobalt Blue', hex: '#0047AB' },
+    { name: 'Turquoise', hex: '#40E0D0' },
+    { name: 'Teal', hex: '#008080' },
+    { name: 'Denim Blue', hex: '#1560BD' },
+    { name: 'Steel Blue', hex: '#4682B4' },
+    { name: 'Powder Blue', hex: '#B0E0E6' },
+    { name: 'Ice Blue', hex: '#CAE1FF' },
+    { name: 'Alice Blue', hex: '#F0F8FF' },
+  ],
+  Pink: [
+    { name: 'Baby Pink', hex: '#F4C2C2' },
+    { name: 'Hot Pink', hex: '#FF69B4' },
+    { name: 'Blush Pink', hex: '#DEADAC' },
+    { name: 'Fuchsia', hex: '#FF00FF' },
+    { name: 'Rose Pink', hex: '#FF66CC' },
+    { name: 'Coral Pink', hex: '#F88379' },
+    { name: 'Magenta', hex: '#FF0090' },
+    { name: 'Carnation Pink', hex: '#FFA6C9' },
+    { name: 'Salmon Pink', hex: '#FA8072' },
+    { name: 'Dusty Pink', hex: '#DFC3C1' },
+  ],
+  Purple: [
+    { name: 'Lavender', hex: '#E6E6FA' },
+    { name: 'Lilac', hex: '#C8A2C8' },
+    { name: 'Mauve', hex: '#E0B0FF' },
+    { name: 'Violet', hex: '#8F00FF' },
+    { name: 'Amethyst', hex: '#9966CC' },
+    { name: 'Plum', hex: '#8E4585' },
+    { name: 'Eggplant', hex: '#614051' },
+    { name: 'Iris', hex: '#5A4FCF' },
+    { name: 'Heather Purple', hex: '#B684BB' },
+    { name: 'Periwinkle', hex: '#CCCCFF' },
+    { name: 'Royal Purple', hex: '#7851A9' },
+  ],
+  Beige: [
+    { name: 'Classic Beige', hex: '#F5F5DC' },
+    { name: 'Light Beige', hex: '#FAF0D2' },
+    { name: 'Dark Beige', hex: '#CCAE7B' },
+    { name: 'Khaki Beige', hex: '#C3B091' },
+    { name: 'Sand', hex: '#C2B280' },
+    { name: 'Tan', hex: '#D2B48C' },
+    { name: 'Camel', hex: '#C19A6B' },
+    { name: 'Ecru', hex: '#C2B280' },
+    { name: 'Stone', hex: '#DED1C5' },
+    { name: 'Mushroom Beige', hex: '#B7A69E' },
+    { name: 'Oatmeal', hex: '#D3B598' },
+    { name: 'Champagne', hex: '#F7E7CE' },
+    { name: 'Almond', hex: '#EFDECD' },
+    { name: 'Sandstone', hex: '#C9AE74' },
+  ],
+};
+
 // Simple test cases - run with: node -e "import('./color.test.js')"
 const tests = [
   // Basic color tests
@@ -57,6 +121,13 @@ const tests = [
   { name: 'Desaturated pink (not grey)', input: { r: 180, g: 160, b: 170 }, expected: 'Pink' },
   { name: 'Khaki (warm brown-beige)', input: { r: 160, g: 144, b: 120 }, expected: 'Brown' },
 ];
+
+// Generate comprehensive shade tests
+for (const [expected, shades] of Object.entries(shadeGroups)) {
+  shades.forEach(({ name, hex }) => {
+    tests.push({ name: `${name} shade`, input: hexToRgb(hex), expected });
+  });
+}
 
 function runTests() {
   console.log('🎨 Running Color Classification Tests\n');
