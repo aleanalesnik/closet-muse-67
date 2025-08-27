@@ -42,7 +42,7 @@ export async function getDominantColor(src: string, size = 64): Promise<RGB> {
     const max = Math.max(R, G, B);
     const min = Math.min(R, G, B);
     const light = (max + min) / 2 / 255;
-    if (light > 0.93) continue;
+    if (light > 0.97) continue;
 
     r += R; g += G; b += B; n++;
   }
