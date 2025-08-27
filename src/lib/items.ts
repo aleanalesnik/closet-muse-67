@@ -1,8 +1,8 @@
-import { supabase } from "@/lib/supabase";
+import { supabase } from "./supabase";
 
-export async function uploadAndProcessItem(file: File, title?: string) {
+export async function uploadAndProcessItem(file: File, title?: string, client = supabase) {
   // Check authentication
-  const { data: { user }, error: userErr } = await supabase.auth.getUser();
+  const { data: { user }, error: userErr } = await client.auth.getUser();
   if (userErr || !user) throw new Error("Not signed in");
 
   // 2) make a storage path (keep bucket private)
@@ -11,14 +11,14 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   const imagePath = `${user.id}/items/${objectId}.${ext}`;
 
   // Upload to storage
-  const { error: upErr } = await supabase.storage.from("sila").upload(imagePath, file, {
+  const { error: upErr } = await client.storage.from("sila").upload(imagePath, file, {
     contentType: file.type || `image/${ext}`,
     upsert: true
   });
   if (upErr) throw upErr;
 
   // 4) create DB row (so we have an item id & owner)
-  const { data: inserted, error: insErr } = await supabase
+  const { data: inserted, error: insErr } = await client
     .from("items")
     .insert({
       owner: user.id,
@@ -33,7 +33,7 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   
 
   // 5) Get public URL for the uploaded image
-  const { data: urlData } = supabase.storage
+  const { data: urlData } = client.storage
     .from("sila")
     .getPublicUrl(imagePath);
   
@@ -63,12 +63,12 @@ export async function uploadAndProcessItem(file: File, title?: string) {
   return { itemId, imagePath, fn: { ok: true, result: fnData.result } };
 }
 
-export async function findMatchingItems({ category, details }: { category: string; details?: string[] }) {
+export async function findMatchingItems({ category, details }: { category: string; details?: string[] }, client = supabase) {
   // Check authentication
-  const { data: { user }, error: userErr } = await supabase.auth.getUser();
+  const { data: { user }, error: userErr } = await client.auth.getUser();
   if (userErr || !user) throw new Error("Not signed in");
 
-  let query = supabase
+  let query = client
     .from("items")
     .select("*")
     .eq("owner", user.id)

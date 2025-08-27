@@ -120,7 +120,7 @@ function pickPrimaryGarment(preds: HFPred[], minScore: number): HFPred | null {
     const scoreDiff = b.score - a.score;
     if (scoreDiff !== 0) return scoreDiff;
     const areaA = (a.box.xmax - a.box.xmin) * (a.box.ymax - a.box.ymin);
-    const areaB = (b.box.xmax - b.box.xmin) * (b.box.ymax - b.ymin);
+    const areaB = (b.box.xmax - b.box.xmin) * (b.box.ymax - b.box.ymin);
     return areaB - areaA;
   });
 
@@ -303,7 +303,7 @@ async function callGroundingDINO(dataUrl: string, category: string): Promise<[nu
 }
 
 // --- Serve ---
-Deno.serve(async (req) => {
+export async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return json({ status: "ok" });
 
   const t0 = performance.now();
@@ -325,17 +325,43 @@ Deno.serve(async (req) => {
 
     if (req.method !== "POST") return json({ status: "fail", error: "Method not allowed", build: BUILD }, 405);
 
-    // Accept binary data directly
-    const buf = new Uint8Array(await req.arrayBuffer());
-    const mime = req.headers.get("content-type") ?? "image/jpeg";
-    
-    // Get image dimensions
-    const dims = getImageDims(buf) ?? { width: 1, height: 1 };
-    const imgW = dims.width;
-    const imgH = dims.height;
+    // --- Parse request body (binary or JSON) ---
+    let buf: Uint8Array;
+    let mime: string;
+    let imgW: number;
+    let imgH: number;
+    let baseT = 0.12;
 
-    // Get threshold from header or use default
-    const baseT = Number(req.headers.get("x-threshold") ?? 0.12);
+    const ctype = req.headers.get("content-type") || "";
+    if (ctype.includes("application/json")) {
+      const body: ReqBody = await req.json();
+      baseT = body.threshold ?? 0.12;
+      if (body.base64Image) {
+        const info = dataUrlInfo(body.base64Image);
+        const [, b64] = info.dataUrl.split(",", 2);
+        buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        mime = info.dataUrl.match(/^data:(.*);base64/)?.[1] || "image/png";
+        imgW = info.width;
+        imgH = info.height;
+      } else if (body.imageUrl) {
+        const info = await urlToDataUrl(body.imageUrl);
+        const [, b64] = info.dataUrl.split(",", 2);
+        buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        mime = info.dataUrl.match(/^data:(.*);base64/)?.[1] || "image/png";
+        imgW = info.width;
+        imgH = info.height;
+      } else {
+        console.log("[WARN] Missing image in JSON body");
+        return json({ status: "fail", error: "Missing image", build: BUILD }, 400);
+      }
+    } else {
+      buf = new Uint8Array(await req.arrayBuffer());
+      mime = req.headers.get("content-type") ?? "image/jpeg";
+      const dims = getImageDims(buf) ?? { width: 1, height: 1 };
+      imgW = dims.width;
+      imgH = dims.height;
+      baseT = Number(req.headers.get("x-threshold") ?? 0.12);
+    }
     // --- YOLOS processing only ---
     console.log(`[PERF] Starting YOLOS call at ${performance.now() - t0}ms`);
     
@@ -470,4 +496,6 @@ Deno.serve(async (req) => {
       build: BUILD 
     }, 500);
   }
-});
+}
+
+Deno.serve(handler);
