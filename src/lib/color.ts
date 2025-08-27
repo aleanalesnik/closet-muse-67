@@ -101,17 +101,22 @@ export function snapToPalette(rgb: RGB) {
   // Convert to HSL for hue/saturation/lightness analysis
   const hsl = rgbToHsl(rgb);
   
-  // Apply heuristics for extreme cases
+  // Apply heuristics for extreme cases - prioritize white detection
   if (hsl.l > 0.95 && hsl.s < 0.1) return PALETTE.find(p => p.name === "White")!;
   if (hsl.l < 0.05) return PALETTE.find(p => p.name === "Black")!;
+  
+  // Enhanced white detection for slightly tinted whites
+  if (hsl.l > 0.85 && hsl.s < 0.15) return PALETTE.find(p => p.name === "White")!;
+  if (hsl.l > 0.9) return PALETTE.find(p => p.name === "White")!;
+  
   if (hsl.s < 0.1) {
     if (hsl.l < 0.2) return PALETTE.find(p => p.name === "Black")!;
     if (hsl.l > 0.8) return PALETTE.find(p => p.name === "White")!;
     return PALETTE.find(p => p.name === "Grey")!;
   }
 
-  // Warm, light hues often correspond to beige tones
-  if (hsl.h >= 15 && hsl.h <= 60 && hsl.l > 0.55 && hsl.s < 0.9) {
+  // More restrictive beige detection - only for true beige items
+  if (hsl.h >= 20 && hsl.h <= 50 && hsl.l > 0.4 && hsl.l < 0.8 && hsl.s > 0.15 && hsl.s < 0.4) {
     return PALETTE.find(p => p.name === "Beige")!;
   }
   

@@ -120,6 +120,17 @@ const tests = [
   { name: 'Medium saturation orange', input: { r: 200, g: 150, b: 100 }, expected: 'Orange' },
   { name: 'Desaturated pink (not grey)', input: { r: 180, g: 160, b: 170 }, expected: 'Pink' },
   { name: 'Khaki (warm brown-beige)', input: { r: 160, g: 144, b: 120 }, expected: 'Brown' },
+  
+  // White/beige boundary regression tests
+  { name: 'Off-white with warm tint', input: { r: 250, g: 248, b: 245 }, expected: 'White' },
+  { name: 'Cream white', input: { r: 255, g: 253, b: 240 }, expected: 'White' },
+  { name: 'Ivory', input: { r: 255, g: 255, b: 240 }, expected: 'White' },
+  { name: 'True beige', input: { r: 210, g: 180, b: 140 }, expected: 'Beige' },
+  { name: 'Light beige', input: { r: 220, g: 200, b: 180 }, expected: 'Beige' },
+  { name: 'Warm white', input: { r: 252, g: 250, b: 248 }, expected: 'White' },
+  { name: 'Very light pink', input: { r: 255, g: 240, b: 245 }, expected: 'White' },
+  { name: 'Very light blue', input: { r: 240, g: 248, b: 255 }, expected: 'White' },
+  { name: 'Very light yellow', input: { r: 255, g: 255, b: 240 }, expected: 'White' },
 ];
 
 // Generate comprehensive shade tests
