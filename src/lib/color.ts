@@ -90,7 +90,7 @@ export function snapToPalette(rgb: RGB) {
   };
   
   // Check hue ranges first for strong colors
-  if (hsl.s > 0.3) {
+  if (hsl.s > 0.15) {
     for (const [colorName, [min, max]] of Object.entries(hueRanges)) {
       const inRange = max > min ? (h >= min && h <= max) : (h >= min || h <= max);
       if (inRange) {
