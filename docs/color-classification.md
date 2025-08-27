@@ -51,32 +51,49 @@ The classification process follows this hierarchy:
 
 ### HSL Heuristics
 
-The system converts RGB values to HSL (Hue, Saturation, Lightness) to apply intelligent rules:
+The system converts RGB values to HSL (Hue, Saturation, Lightness) to apply intelligent rules with improved thresholds:
 
 ```typescript
 // Extreme lightness handling
-if (hsl.l > 0.95) return "White";
-if (hsl.l < 0.05) return "Black";
+if (hsl.l > COLOR_THRESHOLDS.lightnessWhite) return "White";    // 0.95
+if (hsl.l < COLOR_THRESHOLDS.lightnessBlack) return "Black";    // 0.05
 
-// Low saturation handling
-if (hsl.s < 0.1) {
-  if (hsl.l < 0.2) return "Black";
-  if (hsl.l > 0.8) return "White"; 
+// Low saturation (achromatic) handling with improved boundaries
+if (hsl.s < COLOR_THRESHOLDS.saturationGrey) {                  // 0.1
+  if (hsl.l < COLOR_THRESHOLDS.lightnessGreyBlack) return "Black";  // 0.2
+  if (hsl.l > COLOR_THRESHOLDS.lightnessGreyWhite) return "White";  // 0.9 (raised from 0.8)
+  
+  // Dark desaturated hue handling (NEW)
+  const h = hsl.h;
+  // Dark desaturated reds → Maroon
+  if (redInRange && hsl.l <= COLOR_THRESHOLDS.lightnessMaroonMax) return "Maroon";
+  // Dark desaturated blues → Navy  
+  if (blueInRange && hsl.l <= COLOR_THRESHOLDS.lightnessNavyMax) return "Navy";
+  // Warm mid-tone desaturated colors → Brown
+  if (warmInRange && hsl.l > 0.2 && hsl.l < 0.9) return "Brown";
+  
   return "Grey";
+}
+
+// Beige heuristic (NEW): Warm, light, low-to-moderate saturation
+if (beigeInRange && hsl.l >= COLOR_THRESHOLDS.lightnessBeigeMin && 
+    hsl.s < COLOR_THRESHOLDS.saturationHueMap) {
+  return "Beige";
 }
 ```
 
 ### Hue Range Mapping
 
-For colors with sufficient saturation (S > 30%), the system uses hue ranges:
+For colors with sufficient saturation (S > 15%, lowered from 30%), the system uses hue ranges:
 
 | Color | Hue Range (degrees) | Notes |
 |-------|-------------------|-------|
-| Red | 345-15 | Wraps around 0° |
+| Red | 345-15 | Wraps around 0°, lightness < 30% → Maroon |  
 | Orange | 15-45 | |
 | Yellow | 45-75 | |
+| Beige | 30-60 | Special case: warm + light + low saturation |
 | Green | 75-165 | Wide range for various greens |
-| Blue | 165-240 | |
+| Blue | 165-240 | Lightness < 30% → Navy |
 | Purple | 240-290 | |
 | Pink | 290-345 | Magentas and hot pinks |
 
@@ -93,17 +110,51 @@ When hue-based mapping fails or for ambiguous cases, the system uses CIE LAB col
 
 ## Configurable Constants
 
-Key thresholds that can be adjusted:
+The color classification system uses centralized thresholds defined in `COLOR_THRESHOLDS`:
 
 ```typescript
-const COLOR_THRESHOLDS = {
-  lightnessWhite: 0.95,        // Minimum lightness for white
-  lightnessBlack: 0.05,        // Maximum lightness for black
-  saturationGreyCutoff: 0.1,   // Maximum saturation for grey
-  saturationColorMinimum: 0.3, // Minimum saturation for hue mapping
-  lightnessVariantCutoff: 0.3, // Lightness cutoff for dark variants
-};
+export const COLOR_THRESHOLDS = {
+  // Lightness boundaries
+  lightnessWhite: 0.95,      // Above this = White
+  lightnessBlack: 0.05,      // Below this = Black
+  lightnessGreyWhite: 0.9,   // Grey vs White cutoff (raised from 0.8)
+  lightnessGreyBlack: 0.2,   // Grey vs Black cutoff
+  lightnessBeigeMin: 0.7,    // Minimum lightness for Beige
+  lightnessMaroonMax: 0.3,   // Maximum lightness for Maroon
+  lightnessNavyMax: 0.3,     // Maximum lightness for Navy
+  
+  // Saturation boundaries
+  saturationGrey: 0.1,       // Below this = achromatic (grey/black/white)
+  saturationHueMap: 0.15,    // Below this = no hue mapping (lowered from 0.3)
+  
+  // Hue ranges (in degrees)
+  hueRanges: {
+    Red: [345, 15],
+    Orange: [15, 45], 
+    Yellow: [45, 75],
+    Beige: [30, 60],         // Warm low-sat tones
+    Green: [75, 165],
+    Blue: [165, 240],
+    Purple: [240, 290],
+    Pink: [290, 345],
+  },
+  
+  // Special hue ranges for low-saturation handling
+  lowSatHueRanges: {
+    Red: [345, 15],          // For Maroon detection
+    Blue: [165, 240],        // For Navy detection
+    Warm: [20, 80],          // For Brown detection (orange/yellow/beige range)
+  }
+} as const;
 ```
+
+### Key Improvements Made:
+
+1. **Fixed Grey vs White Boundary**: Raised `lightnessGreyWhite` from 0.8 to 0.9 to prevent light grey items from being classified as White
+2. **Improved Muted Color Detection**: Lowered `saturationHueMap` from 0.3 to 0.15 to capture denim blues, olive greens, and dusty pinks
+3. **Added Beige Heuristic**: Warm, light colors (hue 30°-60°, lightness > 0.7) are now properly classified as Beige
+4. **Enhanced Dark Desaturated Handling**: Low-saturation colors now use hue information to distinguish Maroon, Navy, and Brown from Grey
+5. **Removed Redundant Hue Ranges**: Maroon and Navy are now derived from Red/Blue + lightness rather than separate hue ranges
 
 ## Implementation Details
 
